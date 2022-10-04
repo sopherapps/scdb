@@ -1,0 +1,17 @@
+[package]
+name = "scdb"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+twox-hash = {version = "1.6.3"}
+
+[dev-dependencies]
+serial_test = "*"
+criterion = { version = "0.4.*"}
+
+[[bench]]
+name = "scdb"
+harness = false
