@@ -1,8 +1,7 @@
 # How scdb Works
 
 This is how scdb works under the hood. Keep in mind that scdb is basically a hashtable with the memory-mapped database
-file
-acting as the underlying array.
+file acting as the underlying array.
 
 ### Operations
 
@@ -10,7 +9,45 @@ There are four main operations
 
 #### 1. Initialization
 
+- This creates the database file if it does not exist
+  - adds the 100-byte header basing on user configuration and default values
+  - adds the placeholders for the index blocks, each item pre-initialized with a zero.
+- It then memory maps the entire database file
+- And loads the derived and non-derived properties like 'max_keys', 'block_size', 'redundant_blocks',
+  'number_of_index_blocks' (`round_up(max_keys / number_of_items_per_index_block) + redundant_blocks`),
+  'number_of_items_per_index_block' (`round_up(block_size / 4)`),
+  'key_values_start_point' (`100 + (number_of_items_per_index_block * 4 * 8 * number_of_index_blocks) + 1`),
+  'net_block_size' (`number_of_items_per_index_block * 4`)
+
 #### 2. Set
+
+- The key supplied is run through a hashfunction with modulo `net_block_size`. Let the hashed value be `hash`
+- The 4-byte offset at offset `101 + (4 * hash)` is read. This is the first possible pointer to the key-value entry.
+  Let's call it `key_value_offset`.
+- If this `key_value_offset` is zero, this means that no value has been set for that key yet.
+  - the length of the current file is got. After adding 1 to it, we get the `expected_offset` of the new key-value
+    entry
+  - So the key-value entry (with all its data including `key_size`, `expiry` (got from ttl from user), `value_size`
+    , `value`, `deleted`) are appended to the end of the file
+  - the `expected_offset` is then inserted at `101 + (4 * hash)` in place of the zero
+- If this `key_value_offset` is non-zero, it is possible that the value for that key has already been set.
+  - retrieve the key at the given `key_value_offset`. (Do note that there is a 4-byte number `key_size` before the key.
+    That number gives the size of the key).
+  - if this key is the same as the key passed:
+    - update this key-value entry (i.e. the `expiry`, `value_size`, `value`, `deleted`)
+    - [TODO] - need to deal with possibility of overwriting the entries after it if the value is bigger than the
+      previous.
+    - ...continue
+  - else ...
+
+##### Caveats
+
+- There is a possibility that when one sets a given key, we may find all index blocks for the given hash already filled.
+  We thus have to throw a `CollisionSaturatedError` and abort inserting the key. This means that the occurrence of such
+  errors will increase in frequency as the number of keys comes closer to the `max_keys` value.
+  One possible remedy to this is to add a more redundant index block(s) i.e. increase `redundant_blocks`. Keep in mind
+  that this consumes extra space.
+-
 
 #### 3. Delete
 
