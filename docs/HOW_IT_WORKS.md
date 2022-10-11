@@ -5,7 +5,7 @@ file acting as the underlying array.
 
 ### Operations
 
-There are four main operations
+There are five main operations
 
 #### 1. Initialization
 
@@ -33,8 +33,7 @@ There are four main operations
     - the `last_offset` header is then updated to `last_offset + size_of_kv(kv)`
 6. If this `key_value_offset` is non-zero, it is possible that the value for that key has already been set.
     - retrieve the key at the given `key_value_offset`. (Do note that there is a 4-byte number `key_size` before the
-      key.
-      That number gives the size of the key).
+      key. That number gives the size of the key).
     - if this key is the same as the key passed, we have to update it by deleting then inserting it again:
         - update the `deleted` of the key-value entry to 1
         - The key-value entry (with all its data including `key_size`, `expiry` (got from ttl from user), `value_size`
@@ -46,6 +45,9 @@ There are four main operations
           the `CollisionSaturatedError` error. We have run out of blocks without getting a free slot to add the
           key-value entry.
         - else go back to step 3.
+
+__Note: this uses a form of [separate chaining](https://www.geeksforgeeks.org/hashing-set-2-separate-chaining/) to
+handle hash collisions.__
 
 ##### Performance
 
@@ -63,4 +65,27 @@ There are four main operations
 
 #### 3. Delete
 
+1. The key supplied is run through a hashfunction with modulo `net_block_size`. Let the hashed value be `hash`
+2. Set `index_block_offset` to zero to start from the first block.
+3. The `index_address` is set to `index_block_offset + 101 + (4 * hash)`.
+4. The 4-byte offset at the `index_address` offset is read. This is the first possible pointer to the key-value entry.
+   Let's call it `key_value_offset`.
+5. If this `key_value_offset` is non-zero, it is possible that the value for that key exists.
+    - retrieve the key at the given `key_value_offset`. (Do note that there is a 4-byte number `key_size` before the
+      key. That number gives the size of the key).
+    - if this key is the same as the key passed, we delete it:
+        - update the `deleted` of the key-value entry to 1
+        - zero is then inserted at `index_address` in place of the former offset
+    - else increment the `index_block_offset` by `net_block_size`
+        - if the new `index_block_offset` is equal to or greater than the `key_values_start_point`, stop and return.
+          The key does not exist.
+        - else go back to step 3.
+
+##### Performance
+
+- This operation is O(k) where k is the `number_of_index_blocks`.
+- About 4 4-byte integers are allocated on the stack.
+
 #### 4. Get
+
+#### 5. Compact
