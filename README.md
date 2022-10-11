@@ -2,13 +2,16 @@
 
 A very simple and fast key-value store but persisting data to disk, with a "localStorage-like" API.
 
-**scdb is not yet production ready. It is still being heavily developed and its API (and features) could change quite drastically**
+**scdb is not yet production ready. It is still being heavily developed and its API (and features) could change quite
+drastically**
 
 ## Purpose
 
-Coming from front-end web development, [localStorage](https://developer.mozilla.org/en-US/docs/Web/API/Window/localStorage) was always
+Coming from front-end web
+development, [localStorage](https://developer.mozilla.org/en-US/docs/Web/API/Window/localStorage) was always
 a convenient way of quickly persisting data to be used later by a given application even after a restart.
-Its API was extremely simple i.e. `localStorage.getItem()`, `localStorage.setItem()`, `localStorage.removeItem()`, `localStorage.clear()`.
+Its API was extremely simple i.e. `localStorage.getItem()`, `localStorage.setItem()`, `localStorage.removeItem()`
+, `localStorage.clear()`.
 
 Coming to the backend (or even desktop) development, such an embedded persistent data store with a simple API
 was hard to come by.
@@ -30,10 +33,12 @@ Please look at the [CONTRIBUTIONS GUIDELINES](./docs/CONTRIBUTING.md)
 You can also look in the [./docs](./docs) folder to get up to speed with the internals of scdb e.g.
 
 - [database file format](./docs/DB_FILE_FORMAT.md)
+- [how it works](./docs/HOW_IT_WORKS.md)
 
 ## Bindings
 
-scdb is meant to be used in multiple languages of choice. However, the bindings for most of them are yet to be developed.
+scdb is meant to be used in multiple languages of choice. However, the bindings for most of them are yet to be
+developed.
 Here are those that have been developed:
 
 - [ ] [rust](TODO)
@@ -44,10 +49,9 @@ Here are those that have been developed:
 - [ ] [java](TODO)
 - [ ] [nodejs](TODO)
 
-
 ### TODO:
 
-- [ ] Add designs
+- [x] Add designs
 - [ ] Add package documentation
 - [ ] Make the key hashing point to offsets on the memory-mapped database file
 - [ ] Add benchmarks
@@ -78,11 +82,17 @@ cargo bench
 ## Acknowledgement
 
 - Inspiration was got from [lmdb](https://www.symas.com/lmdb/technical), especially with regards to memory-mapped files.
-- A few ideas were picked from [redis](https://redis.io/) and [sqlite](https://www.sqlite.org/index.html) especially to do with the database file format.
+- A few ideas were picked from [redis](https://redis.io/) and [sqlite](https://www.sqlite.org/index.html) especially to
+  do with the database file format.
 
 ## Gratitude
 
-To God.
+> "For My Father’s will is that everyone who looks to the Son and believes in Him shall have eternal life, and I will
+> raise them up at the last day."
+>
+> -- John 6: 40
+
+All glory be to God.
 
 ## License
 
