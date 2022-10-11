@@ -4,12 +4,39 @@ This is a description of the file format.
 
 ## Features
 
-- It should be able to have its sections mapped to memory. Each section should be of OS page size.
-- It should have a 100 bit header
-- Each key-value pair has the following parts all in binary format (hex probably)
-    - `SIZE <the 2 byte int number showing number of bits for this pair>`
-    - `KEY <the key>`
-    - `VALUE <the value in binary>`
+This database is basically a hashtable with its 'underlying array' as the database file. It should thus have the
+following features:
+
+- It should be able to have its sections mapped to memory. Each section should be of OS VM page size as done
+  by [lmdb](https://lmdb.readthedocs.io/en/release/#storage-efficiency-limits). To get the OS VM page size in a
+  cross-platform way, we could use what [page_size crate](https://docs.rs/page_size/latest/page_size/) used.
+- All data is saved in bytes
+- It should have the following major sections:
+  - a 100-byte header to hold metadata for the database
+  - a series of consecutive index blocks. They are `round_up(max_keys / (block_size / 4))` where `(block_size / 4)` is
+    items in each index block since each item is a 4-byte offset (offset is described below).
+  - a series of key-value entries
+
+![overview of database file](./overview_of_db_file.svg)
+
+- The 100-byte header, similar to [sqlite](https://www.sqlite.org/fileformat.html#the_database_header) contains:
+
+| Offset | Size |                                                                       Description                                                                       |
+|:------:|:----:|:-------------------------------------------------------------------------------------------------------------------------------------------------------:|
+| 0      |  16  | The header string: "Scdb versn 0.001"                                                                                                                   |
+| 16     |  2   | `block_size` - the database page size in bytes. Must be a power of two, as got from the [page_size crate](https://docs.rs/page_size/latest/page_size/). |
+| 18     |  8   | `max_keys` - maximum number of keys (saved as a 4 byte number)                                                                                          |
+| 26     |  74  | Reserved for expansion. Must be zero.                                                                                                                   |
+
+- The index blocks each contain offsets where an offset is how far in bits from the start of the file that you will find
+  the corresponding key-value entry.
+- Each key-value entry has the following parts all in binary format
+  - `KEY SIZE <the 4 byte unsigned integer showing number of bits for this key>`
+  - `KEY <the key>`
+  - `EXPIRY <the timestamp>` (optional)
+  - `DELETED <a 1 bit flag, 1 if deleted, 0 if not>`
+  - `VALUE SIZE <the 4 byte unsigned integer showing number of bits for this value>`
+  - `VALUE <the value in binary>`
 
 ## Acknowledgements
 
