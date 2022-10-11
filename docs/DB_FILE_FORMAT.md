@@ -25,9 +25,10 @@ following features:
 |:------:|:----:|:-------------------------------------------------------------------------------------------------------------------------------------------------------:|
 | 0      | 16   | The header string: "Scdb versn 0.001"                                                                                                                   |
 | 16     | 2    | `block_size` - the database page size in bytes. Must be a power of two, as got from the [page_size crate](https://docs.rs/page_size/latest/page_size/). |
-| 18     | 8    | `max_keys` - maximum number of keys (saved as a 4 byte number)                                                                                          |
-| 26     | 2    | `redundant_blocks` - number of redundant index blocks to cater for where all index blocks are filled up for a given hash. Default is 1.                 |
-| 28     | 72   | Reserved for expansion. Must be zero.                                                                                                                   |
+| 18     | 8    | `max_keys` - maximum number of keys (saved as a 4 byte number). Defaults to 1000,000 (1 million)                                                        |
+| 26     | 2    | `redundant_blocks` - number of redundant index blocks to cater for where all index blocks are filled up for a given hash. Defaults to 1.                |
+| 28     | 4    | `last_offset` - the last key-value entry offset: Defaults to `100 + (number_of_items_per_index_block * 4 * 8 * number_of_index_blocks)`.                |
+| 32     | 68   | Reserved for expansion. Must be zero.                                                                                                                   |
 
 - The index blocks each contain offsets where an offset is how far in bits from the start of the file that you will find
   the corresponding key-value entry.
