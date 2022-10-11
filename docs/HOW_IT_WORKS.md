@@ -30,7 +30,8 @@ There are five main operations
     - So the key-value entry (with all its data including `key_size`, `expiry` (got from ttl from user), `value_size`
       , `value`, `deleted`) is appended to the end of the file at offset `last_offset + 1`
     - the `last_offset + 1` is then inserted at `index_address` in place of the zero
-    - the `last_offset` header is then updated to `last_offset + size_of_kv(kv)`
+    - the `last_offset` header is then updated
+      to `last_offset + get_size_of_kv(kv)` [get_size_of_kv gets the total size of the entry in bits]
 6. If this `key_value_offset` is non-zero, it is possible that the value for that key has already been set.
     - retrieve the key at the given `key_value_offset`. (Do note that there is a 4-byte number `key_size` before the
       key. That number gives the size of the key).
@@ -39,7 +40,7 @@ There are five main operations
         - The key-value entry (with all its data including `key_size`, `expiry` (got from ttl from user), `value_size`
           , `value`, `deleted`) is appended to the end of the file at offset `last_offset + 1`
         - the `last_offset + 1` is then inserted at `index_address` in place of the former offset
-        - the `last_offset` header is then updated to `last_offset + size_of_kv(kv)`
+        - the `last_offset` header is then updated to `last_offset + get_size_of_kv(kv)`
     - else increment the `index_block_offset` by `net_block_size`
         - if the new `index_block_offset` is equal to or greater than the `key_values_start_point`, raise
           the `CollisionSaturatedError` error. We have run out of blocks without getting a free slot to add the
@@ -96,7 +97,9 @@ handle hash collisions.__
 5. If this `key_value_offset` is non-zero, it is possible that the value for that key exists.
     - retrieve the key at the given `key_value_offset`. (Do note that there is a 4-byte number `key_size` before the
       key. That number gives the size of the key).
-    - if this key is the same as the key passed, we get the `value` from that entry
+    - if this key is the same as the key passed:
+        - if the `deleted` is 1 or `expiry` is greater than the `current_timestamp`, return `None`
+        - else return `value` for this key-value entry
     - else increment the `index_block_offset` by `net_block_size`
         - if the new `index_block_offset` is equal to or greater than the `key_values_start_point`, stop and
           return `None`.
@@ -109,3 +112,58 @@ handle hash collisions.__
 - About 3 4-byte integers are allocated on the stack.
 
 #### 5. Compact
+
+Compaction can run automatically every few hours. During that time, the database would be locked.
+No read, nor write would be allowed.
+
+1. Set `latest_compacted_offset` to `key_values_start_point - 1`.
+2. Set `offset_to_compact` to `key_values_start_point`.
+3. If `offset_to_compact` is greater or equal to `last_offset`, compacting is done.
+    - truncate the mmapped file from `latest_compacted_offset + 1` to `last_offset`
+      (TODO: how to do this without losing mappings)
+    - update `last_offset` to `latest_compacted_offset`
+    - stop and return (get out of loop or recursion)
+4. If the `deleted` in the key-value entry at `offset_to_compact` is 1 (i.e. deleted)
+   or `expiry` is greater or equal to the `current_timestamp`, get rid of it:
+    - increment the `offset_to_compact` by the `get_size_of_kv(kv)`
+    - go back to step 3 (continue with loop or recursion)
+5. If the `deleted` in the key-value entry at `offset_to_compact` is 0 (i.e. not deleted)
+   and `expiry` is less than the `current_timestamp`
+   and `offset_to_compact - latest_compacted_offset` is greater than 1, shift this entry up:
+    - copy the key-value entry at `offset_to_compact` and paste it at offset `latest_compacted_offset + 1`
+    - Run the key of this entry through a hashfunction with modulo `net_block_size` to get the hashed value `hash`
+      then update the offset for this entry to be `latest_compacted_offset + 1`. Do this:
+
+       <ol>
+           <li>Set `index_block_offset` to zero to start from the first block</li>
+           <li>The `index_address` is set to `index_block_offset + 101 + (4 * hash)`</li>
+           <li>The 4-byte offset at the `index_address` offset is read. This is the first possible pointer to the key-value entry.
+              Let's call it `key_value_offset`.</li>
+           <li>If this `key_value_offset` is non-zero, it is possible that the value for that key exists</li>
+               <ul>
+                   <li>retrieve the key at the given `key_value_offset`. (Do note that there is a 4-byte number `key_size` before the
+                         key. That number gives the size of the key).</li>
+                   <li>if this key is the same as the key passed, we update its offset at `index_address` to `latest_compacted_offset + 1`</li>
+                   <li>else increment the `index_block_offset` by `net_block_size`:</li>
+                       <ul>
+                           <li>if the new `index_block_offset` is equal to or greater than the `key_values_start_point`, raise
+                                  the `CorruptedDataError` error. We expected that offset to exist but it did not.</li>
+                           <li>else go back to step (ii)</li>
+                       </ul>
+               </ul>
+       </ol>
+
+    - Increment `latest_compacted_offset` by `get_size_of_kv(kv)`
+    - Increment `offset_to_compact` by `get_size_of_kv(kv)`
+    - go back to step 3 (continue with loop or recursion)
+6. Else:
+    - Increment `latest_compacted_offset` by `get_size_of_kv(kv)`
+    - Increment `offset_to_compact` by `get_size_of_kv(kv)`
+    - go back to step 3 (continue with loop or recursion)
+
+##### Performance
+
+- This operation is O(kN) where k is the `number_of_index_blocks` and N is the number of keys in the file before
+  compaction.
+- The worst case in terms of memory allocations is when only the first key-value entry was deleted or is expired,
+  all other key-value entries would have to be copied and pasted.
