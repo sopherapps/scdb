@@ -88,4 +88,24 @@ handle hash collisions.__
 
 #### 4. Get
 
+1. The key supplied is run through a hashfunction with modulo `net_block_size`. Let the hashed value be `hash`
+2. Set `index_block_offset` to zero to start from the first block.
+3. The `index_address` is set to `index_block_offset + 101 + (4 * hash)`.
+4. The 4-byte offset at the `index_address` offset is read. This is the first possible pointer to the key-value entry.
+   Let's call it `key_value_offset`.
+5. If this `key_value_offset` is non-zero, it is possible that the value for that key exists.
+    - retrieve the key at the given `key_value_offset`. (Do note that there is a 4-byte number `key_size` before the
+      key. That number gives the size of the key).
+    - if this key is the same as the key passed, we get the `value` from that entry
+    - else increment the `index_block_offset` by `net_block_size`
+        - if the new `index_block_offset` is equal to or greater than the `key_values_start_point`, stop and
+          return `None`.
+          The key does not exist.
+        - else go back to step 3.
+
+##### Performance
+
+- This operation is O(k) where k is the `number_of_index_blocks`.
+- About 3 4-byte integers are allocated on the stack.
+
 #### 5. Compact
