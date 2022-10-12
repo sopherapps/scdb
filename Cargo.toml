@@ -6,11 +6,18 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-twox-hash = {version = "1.6.3"}
+twox-hash = { version = "1.6.3" }
+memmap2 = "0.5.*"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.*"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3.*", features = ["sysinfoapi"] }
 
 [dev-dependencies]
 serial_test = "*"
-criterion = { version = "0.4.*"}
+criterion = { version = "0.4.*" }
 
 [[bench]]
 name = "scdb"

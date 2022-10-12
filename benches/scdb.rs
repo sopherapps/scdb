@@ -1,11 +1,13 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use diskcache_rs::SyncStore;
 use std::iter::{IntoIterator, Iterator};
 use std::string::ToString;
 
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+
+use scdb::Store;
+
 // Setting
 fn setting_benchmark(c: &mut Criterion) {
-    let mut store = SyncStore::new("testdb");
+    let mut store = Store::new("testdb").expect("create store");
     let records = get_records();
     for (k, v) in &records {
         c.bench_function(
@@ -14,7 +16,15 @@ fn setting_benchmark(c: &mut Criterion) {
                 String::from_utf8(k.clone()).unwrap(),
                 String::from_utf8(v.clone()).unwrap()
             ),
-            |b| b.iter(|| store.set(black_box(&k.clone()), black_box(&v.clone()))),
+            |b| {
+                b.iter(|| {
+                    store.set(
+                        black_box(&k.clone()),
+                        black_box(&v.clone()),
+                        black_box(None),
+                    )
+                })
+            },
         );
     }
     store.close();
@@ -22,11 +32,11 @@ fn setting_benchmark(c: &mut Criterion) {
 
 // Updating
 fn updating_benchmark(c: &mut Criterion) {
-    let mut store = SyncStore::new("testdb");
+    let mut store = Store::new("testdb").expect("create store");
     let records = get_records();
     let updates = get_updates();
     for (k, v) in &records {
-        store.set(k, v).expect(&format!("set {:?}", k));
+        store.set(k, v, None).expect(&format!("set {:?}", k));
     }
     for (k, v) in &updates {
         c.bench_function(
@@ -35,7 +45,7 @@ fn updating_benchmark(c: &mut Criterion) {
                 String::from_utf8(k.clone()).unwrap(),
                 String::from_utf8(v.clone()).unwrap()
             ),
-            |b| b.iter(|| store.set(black_box(k), black_box(v))),
+            |b| b.iter(|| store.set(black_box(k), black_box(v), black_box(None))),
         );
     }
     store.close();
@@ -43,10 +53,10 @@ fn updating_benchmark(c: &mut Criterion) {
 
 // Getting
 fn getting_benchmark(c: &mut Criterion) {
-    let mut store = SyncStore::new("testdb");
+    let mut store = Store::new("testdb").expect("create store");
     let records = get_records();
     for (k, v) in &records {
-        store.set(k, v).expect(&format!("set {:?}", k));
+        store.set(k, v, None).expect(&format!("set {:?}", k));
     }
     for (k, _) in &records {
         c.bench_function(
@@ -59,10 +69,10 @@ fn getting_benchmark(c: &mut Criterion) {
 
 // Deleting
 fn deleting_benchmark(c: &mut Criterion) {
-    let mut store = SyncStore::new("testdb");
+    let mut store = Store::new("testdb").expect("create store");
     let records = get_records();
     for (k, v) in &records {
-        store.set(k, v).expect(&format!("set {:?}", k));
+        store.set(k, v, None).expect(&format!("set {:?}", k));
     }
 
     for (k, _) in &records {
@@ -76,10 +86,10 @@ fn deleting_benchmark(c: &mut Criterion) {
 
 // Clearing
 fn clearing_benchmark(c: &mut Criterion) {
-    let mut store = SyncStore::new("testdb");
+    let mut store = Store::new("testdb").expect("create store");
     let records = get_records();
     for (k, v) in &records {
-        store.set(k, v).expect(&format!("set {:?}", k));
+        store.set(k, v, None).expect(&format!("set {:?}", k));
     }
 
     c.bench_function("clear", |b| b.iter(|| store.clear()));

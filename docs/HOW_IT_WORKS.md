@@ -16,14 +16,14 @@ There are five main operations
 - And loads the derived and non-derived properties like 'max_keys', 'block_size', 'redundant_blocks', 'last_offset',
   'number_of_index_blocks' (`round_up(max_keys / number_of_items_per_index_block) + redundant_blocks`),
   'number_of_items_per_index_block' (`round_up(block_size / 4)`),
-  'key_values_start_point' (`100 + (number_of_items_per_index_block * 4 * 8 * number_of_index_blocks) + 1`),
-  'net_block_size' (`number_of_items_per_index_block * 4`)
+  'key_values_start_point' (`800 + (number_of_items_per_index_block * 4 * 8 * number_of_index_blocks) + 1`),
+  'net_block_size_in_bits' (`number_of_items_per_index_block * 4 * 8`)
 
 #### 2. Set
 
-1. The key supplied is run through a hashfunction with modulo `net_block_size`. Let the hashed value be `hash`
+1. The key supplied is run through a hashfunction with modulo `net_block_size_in_bits`. Let the hashed value be `hash`
 2. Set `index_block_offset` to zero to start from the first block.
-3. The `index_address` is set to `index_block_offset + 101 + (4 * hash)`.
+3. The `index_address` is set to `index_block_offset + 801 + hash`.
 4. The 4-byte offset at the `index_address` offset is read. This is the first possible pointer to the key-value entry.
    Let's call it `key_value_offset`.
 5. If this `key_value_offset` is zero, this means that no value has been set for that key yet.
@@ -41,7 +41,7 @@ There are five main operations
           , `value`, `deleted`) is appended to the end of the file at offset `last_offset + 1`
         - the `last_offset + 1` is then inserted at `index_address` in place of the former offset
         - the `last_offset` header is then updated to `last_offset + get_size_of_kv(kv)`
-    - else increment the `index_block_offset` by `net_block_size`
+    - else increment the `index_block_offset` by `net_block_size_in_bits`
         - if the new `index_block_offset` is equal to or greater than the `key_values_start_point`, raise
           the `CollisionSaturatedError` error. We have run out of blocks without getting a free slot to add the
           key-value entry.
@@ -66,9 +66,9 @@ handle hash collisions.__
 
 #### 3. Delete
 
-1. The key supplied is run through a hashfunction with modulo `net_block_size`. Let the hashed value be `hash`
+1. The key supplied is run through a hashfunction with modulo `net_block_size_in_bits`. Let the hashed value be `hash`
 2. Set `index_block_offset` to zero to start from the first block.
-3. The `index_address` is set to `index_block_offset + 101 + (4 * hash)`.
+3. The `index_address` is set to `index_block_offset + 801 + hash`.
 4. The 4-byte offset at the `index_address` offset is read. This is the first possible pointer to the key-value entry.
    Let's call it `key_value_offset`.
 5. If this `key_value_offset` is non-zero, it is possible that the value for that key exists.
@@ -77,7 +77,7 @@ handle hash collisions.__
     - if this key is the same as the key passed, we delete it:
         - update the `deleted` of the key-value entry to 1
         - zero is then inserted at `index_address` in place of the former offset
-    - else increment the `index_block_offset` by `net_block_size`
+    - else increment the `index_block_offset` by `net_block_size_in_bits`
         - if the new `index_block_offset` is equal to or greater than the `key_values_start_point`, stop and return.
           The key does not exist.
         - else go back to step 3.
@@ -89,9 +89,9 @@ handle hash collisions.__
 
 #### 4. Get
 
-1. The key supplied is run through a hashfunction with modulo `net_block_size`. Let the hashed value be `hash`
+1. The key supplied is run through a hashfunction with modulo `net_block_size_in_bits`. Let the hashed value be `hash`
 2. Set `index_block_offset` to zero to start from the first block.
-3. The `index_address` is set to `index_block_offset + 101 + (4 * hash)`.
+3. The `index_address` is set to `index_block_offset + 801 + hash`.
 4. The 4-byte offset at the `index_address` offset is read. This is the first possible pointer to the key-value entry.
    Let's call it `key_value_offset`.
 5. If this `key_value_offset` is non-zero, it is possible that the value for that key exists.
@@ -100,7 +100,7 @@ handle hash collisions.__
     - if this key is the same as the key passed:
         - if the `deleted` is 1 or `expiry` is greater than the `current_timestamp`, return `None`
         - else return `value` for this key-value entry
-    - else increment the `index_block_offset` by `net_block_size`
+    - else increment the `index_block_offset` by `net_block_size_in_bits`
         - if the new `index_block_offset` is equal to or greater than the `key_values_start_point`, stop and
           return `None`.
           The key does not exist.
@@ -131,12 +131,13 @@ No read, nor write would be allowed.
    and `expiry` is less than the `current_timestamp`
    and `offset_to_compact - latest_compacted_offset` is greater than 1, shift this entry up:
     - copy the key-value entry at `offset_to_compact` and paste it at offset `latest_compacted_offset + 1`
-    - Run the key of this entry through a hashfunction with modulo `net_block_size` to get the hashed value `hash`
+    - Run the key of this entry through a hashfunction with modulo `net_block_size_in_bits` to get the hashed
+      value `hash`
       then update the offset for this entry to be `latest_compacted_offset + 1`. Do this:
 
        <ol>
            <li>Set `index_block_offset` to zero to start from the first block</li>
-           <li>The `index_address` is set to `index_block_offset + 101 + (4 * hash)`</li>
+           <li>The `index_address` is set to `index_block_offset + 101 + hash`</li>
            <li>The 4-byte offset at the `index_address` offset is read. This is the first possible pointer to the key-value entry.
               Let's call it `key_value_offset`.</li>
            <li>If this `key_value_offset` is non-zero, it is possible that the value for that key exists</li>
@@ -144,7 +145,7 @@ No read, nor write would be allowed.
                    <li>retrieve the key at the given `key_value_offset`. (Do note that there is a 4-byte number `key_size` before the
                          key. That number gives the size of the key).</li>
                    <li>if this key is the same as the key passed, we update its offset at `index_address` to `latest_compacted_offset + 1`</li>
-                   <li>else increment the `index_block_offset` by `net_block_size`:</li>
+                   <li>else increment the `index_block_offset` by `net_block_size_in_bits`:</li>
                        <ul>
                            <li>if the new `index_block_offset` is equal to or greater than the `key_values_start_point`, raise
                                   the `CorruptedDataError` error. We expected that offset to exist but it did not.</li>
