@@ -29,13 +29,9 @@ pub(crate) fn generate_mapping(
         .create(should_create_new)
         .open(file_path)?;
 
-    let file_size = match should_create_new {
-        true => {
-            let header = DbFileHeader::new(max_keys, redundant_blocks);
-            initialize_db_file(&mut file, &header)?;
-            header.last_offset
-        }
-        false => file.metadata()?.len(),
+    if should_create_new {
+        let header = DbFileHeader::new(max_keys, redundant_blocks);
+        initialize_db_file(&mut file, &header)?;
     };
 
     unsafe { MmapOptions::new().map_mut(&file) }

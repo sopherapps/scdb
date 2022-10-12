@@ -5,12 +5,12 @@ use std::io;
 use std::path::Path;
 
 use memmap2::MmapMut;
-use twox_hash::XxHash64;
 
 use crate::{dmap, fs};
 
 pub struct Store {
     data_array: MmapMut,
+    header: dmap::DbFileHeader,
     store_path: String,
 }
 
@@ -30,11 +30,13 @@ impl Store {
         let db_folder = Path::new(store_path);
         fs::initialize_file_db(db_folder);
         let db_file_path = db_folder.join("dump.scdb");
-        let data_array = dmap::mmap::generate_mapping(&db_file_path, max_keys, redundant_blocks)?;
+        let data_array = dmap::generate_mapping(&db_file_path, max_keys, redundant_blocks)?;
+        let header = dmap::DbFileHeader::from_data_array(&data_array)?;
 
         let store = Self {
             data_array,
             store_path: store_path.to_string(),
+            header,
         };
 
         Ok(store)

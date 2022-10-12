@@ -1,4 +1,7 @@
+pub(crate) use entries::DbFileHeader;
+pub(crate) use mmap::generate_mapping;
+
 mod entries;
 mod hash;
-pub(crate) mod mmap;
+mod mmap;
 mod utils;
