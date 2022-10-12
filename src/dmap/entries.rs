@@ -13,6 +13,7 @@ pub(crate) struct DbFileHeader {
 }
 
 impl DbFileHeader {
+    /// Creates a new DbFileHeader
     pub(crate) fn new(max_keys: Option<u64>, redundant_blocks: Option<u16>) -> Self {
         let max_keys = match max_keys {
             None => 1_000_000,
@@ -41,5 +42,23 @@ impl DbFileHeader {
             key_values_start_point,
             net_block_size_in_bits,
         }
+    }
+
+    /// Retrieves the byte array that represents the header.
+    pub(crate) fn get_header_as_bytes(&self) -> Vec<u8> {
+        self.title
+            .iter()
+            .chain(&self.block_size.to_be_bytes())
+            .chain(&self.max_keys.to_be_bytes())
+            .chain(&self.redundant_blocks.to_be_bytes())
+            .chain(&self.last_offset.to_be_bytes())
+            .map(|v| v.to_owned())
+            .collect()
+    }
+
+    /// Creates a place holder for the index blocks.
+    pub(crate) fn create_empty_index_blocks_bytes(&self) -> Vec<u8> {
+        let length = self.number_of_index_blocks * self.items_per_index_block * 4;
+        vec![0; length as usize]
     }
 }

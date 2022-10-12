@@ -7,7 +7,7 @@ use scdb::Store;
 
 // Setting
 fn setting_benchmark(c: &mut Criterion) {
-    let mut store = Store::new("testdb").expect("create store");
+    let mut store = Store::new("testdb", None, None).expect("create store");
     let records = get_records();
     for (k, v) in &records {
         c.bench_function(
@@ -32,7 +32,7 @@ fn setting_benchmark(c: &mut Criterion) {
 
 // Updating
 fn updating_benchmark(c: &mut Criterion) {
-    let mut store = Store::new("testdb").expect("create store");
+    let mut store = Store::new("testdb", None, None).expect("create store");
     let records = get_records();
     let updates = get_updates();
     for (k, v) in &records {
@@ -53,7 +53,7 @@ fn updating_benchmark(c: &mut Criterion) {
 
 // Getting
 fn getting_benchmark(c: &mut Criterion) {
-    let mut store = Store::new("testdb").expect("create store");
+    let mut store = Store::new("testdb", None, None).expect("create store");
     let records = get_records();
     for (k, v) in &records {
         store.set(k, v, None).expect(&format!("set {:?}", k));
@@ -69,7 +69,7 @@ fn getting_benchmark(c: &mut Criterion) {
 
 // Deleting
 fn deleting_benchmark(c: &mut Criterion) {
-    let mut store = Store::new("testdb").expect("create store");
+    let mut store = Store::new("testdb", None, None).expect("create store");
     let records = get_records();
     for (k, v) in &records {
         store.set(k, v, None).expect(&format!("set {:?}", k));
@@ -86,7 +86,7 @@ fn deleting_benchmark(c: &mut Criterion) {
 
 // Clearing
 fn clearing_benchmark(c: &mut Criterion) {
-    let mut store = Store::new("testdb").expect("create store");
+    let mut store = Store::new("testdb", None, None).expect("create store");
     let records = get_records();
     for (k, v) in &records {
         store.set(k, v, None).expect(&format!("set {:?}", k));

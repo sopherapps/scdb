@@ -22,11 +22,15 @@ impl Store {
     /// See [mmap::generate_mapping]
     ///
     /// [mmap::generate_mapping]: crate::dmap::mmap::generate_mapping
-    pub fn new(store_path: &str) -> io::Result<Self> {
+    pub fn new(
+        store_path: &str,
+        max_keys: Option<u64>,
+        redundant_blocks: Option<u16>,
+    ) -> io::Result<Self> {
         let db_folder = Path::new(store_path);
         fs::initialize_file_db(db_folder);
         let db_file_path = db_folder.join("dump.scdb");
-        let data_array = dmap::mmap::generate_mapping(&db_file_path)?;
+        let data_array = dmap::mmap::generate_mapping(&db_file_path, max_keys, redundant_blocks)?;
 
         let store = Self {
             data_array,
@@ -71,7 +75,7 @@ mod tests {
     #[test]
     #[serial]
     fn set_and_read_multiple_key_value_pairs() {
-        let mut store = Store::new(STORE_PATH).expect("create store");
+        let mut store = Store::new(STORE_PATH, None, None).expect("create store");
         let keys = get_keys();
         let values = get_values();
 
@@ -91,7 +95,7 @@ mod tests {
     #[test]
     #[serial]
     fn set_and_delete_multiple_key_value_pairs() {
-        let mut store = Store::new(STORE_PATH).expect("create store");
+        let mut store = Store::new(STORE_PATH, None, None).expect("create store");
         let keys = get_keys();
         let values = get_values();
 
@@ -117,7 +121,7 @@ mod tests {
     #[test]
     #[serial]
     fn set_and_clear() {
-        let mut store = Store::new(STORE_PATH).expect("create store");
+        let mut store = Store::new(STORE_PATH, None, None).expect("create store");
         let keys = get_keys();
         let values = get_values();
 
@@ -138,7 +142,7 @@ mod tests {
     #[test]
     #[serial]
     fn persist_to_file() {
-        let mut store = Store::new(STORE_PATH).expect("create store");
+        let mut store = Store::new(STORE_PATH, None, None).expect("create store");
         let keys = get_keys();
         let values = get_values();
 
@@ -148,7 +152,7 @@ mod tests {
         store.close();
 
         // Open new store instance
-        let mut store = Store::new(STORE_PATH).expect("create store");
+        let mut store = Store::new(STORE_PATH, None, None).expect("create store");
 
         let received_values = get_values_for_keys(&store, &keys);
         let expected_values: Vec<io::Result<Option<Vec<u8>>>> =
@@ -164,7 +168,7 @@ mod tests {
     #[test]
     #[serial]
     fn persist_to_file_after_delete() {
-        let mut store = Store::new(STORE_PATH).expect("create store");
+        let mut store = Store::new(STORE_PATH, None, None).expect("create store");
         let keys = get_keys();
         let values = get_values();
 
@@ -178,7 +182,7 @@ mod tests {
         store.close();
 
         // Open new store instance
-        let mut store = Store::new(STORE_PATH).expect("create store");
+        let mut store = Store::new(STORE_PATH, None, None).expect("create store");
 
         let received_values = get_values_for_keys(&store, &keys);
         let mut expected_values: Vec<io::Result<Option<Vec<u8>>>> =
@@ -197,7 +201,7 @@ mod tests {
     #[test]
     #[serial]
     fn persist_to_file_after_clear() {
-        let mut store = Store::new(STORE_PATH).expect("create store");
+        let mut store = Store::new(STORE_PATH, None, None).expect("create store");
         let keys = get_keys();
         let values = get_values();
 
@@ -209,7 +213,7 @@ mod tests {
         store.close();
 
         // Open new store instance
-        let mut store = Store::new(STORE_PATH).expect("create store");
+        let mut store = Store::new(STORE_PATH, None, None).expect("create store");
 
         let received_values = get_values_for_keys(&store, &keys);
         let expected_values: Vec<io::Result<Option<Vec<u8>>>> =
@@ -225,7 +229,7 @@ mod tests {
     #[test]
     #[serial]
     fn close_flushes_the_memmapped_filed() {
-        let mut store = Store::new(STORE_PATH).expect("create store");
+        let mut store = Store::new(STORE_PATH, None, None).expect("create store");
 
         // Close the store
         store.close();
