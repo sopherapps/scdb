@@ -1,7 +1,8 @@
-#[cfg(unix)]
-use libc;
 #[cfg(windows)]
 use std::mem;
+
+#[cfg(unix)]
+use libc;
 #[cfg(windows)]
 use winapi::um::sysinfoapi::{GetSystemInfo, LPSYSTEM_INFO, SYSTEM_INFO};
 
