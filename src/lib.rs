@@ -2,6 +2,6 @@ extern crate core;
 
 pub use store::Store;
 
-mod dmap;
+mod core;
 mod fs;
 mod store;

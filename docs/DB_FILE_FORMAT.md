@@ -27,7 +27,7 @@ following features:
 |   16   |  4   | `block_size` - the database page size in bytes. Must be a power of two, as got in a similar way to how [page_size crate](https://docs.rs/page_size/latest/page_size/) does it. |
 |   20   |  8   |                                        `max_keys` - maximum number of keys (saved as a 4 byte number). Defaults to 1000,000 (1 million)                                        |
 |   28   |  2   |                    `redundant_blocks` - number of redundant index blocks to cater for where all index blocks are filled up for a given hash. Defaults to 1.                    |
-|   30   |  8   |                    `last_offset` - the last key-value entry offset: Defaults to `800 + (number_of_items_per_index_block * 4 * 8 * number_of_index_blocks)`.                    |
+|   30   |  8   |                      `last_offset` - the last key-value entry offset: Defaults to `100 + (number_of_items_per_index_block * 4 * number_of_index_blocks)`.                      |
 |   38   |  62  |                                                                     Reserved for expansion. Must be zero.                                                                      |
 
 - The index blocks each contain offsets where an offset is how far in bits from the start of the file that you will find
@@ -36,7 +36,7 @@ following features:
     - `KEY SIZE <the 4 byte unsigned integer showing number of bits for this key>`
     - `KEY <the key>`
     - `EXPIRY <the timestamp>` (optional)
-    - `DELETED <a 1 bit flag, 1 if deleted, 0 if not>`
+    - `DELETED <a 1 byte flag, 1 if deleted, 0 if not>`
     - `VALUE SIZE <the 4 byte unsigned integer showing number of bits for this value>`
     - `VALUE <the value in binary>`
 

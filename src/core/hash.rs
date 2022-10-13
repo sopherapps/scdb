@@ -17,24 +17,24 @@ use twox_hash::xxh3::hash64;
 /// items[hash] = value;
 /// ```
 ///
-pub(crate) fn get_hash(key: &str, block_length: u32) -> u32 {
-    let hash = hash64(key.as_bytes());
-    (hash % (block_length as u64)) as u32
+pub(crate) fn get_hash(key: &[u8], block_length: u64) -> u64 {
+    let hash = hash64(key);
+    hash % block_length
 }
 
 #[cfg(test)]
 mod test {
     use std::collections::HashMap;
 
-    use crate::dmap::hash::get_hash;
+    use crate::core::hash::get_hash;
 
     #[test]
     fn get_hash_generates_unique_hashes() {
-        let block_size: u32 = 1289;
+        let block_size: u64 = 1289;
         let keys = vec!["fooo", "food", "bar", "Bargain", "Balance", "Z"];
-        let mut hashed_map: HashMap<u32, String> = Default::default();
+        let mut hashed_map: HashMap<u64, String> = Default::default();
         for key in &keys {
-            let hash = get_hash(key, block_size);
+            let hash = get_hash(key.as_bytes(), block_size);
             assert!(hash <= block_size);
             hashed_map.insert(hash, key.to_string());
         }
@@ -46,11 +46,11 @@ mod test {
 
     #[test]
     fn get_hash_always_generates_the_same_hash_for_same_key() {
-        let block_size: u32 = 1289;
+        let block_size: u64 = 1289;
         let key = "fooo";
-        let expected_hash = get_hash(key, block_size);
+        let expected_hash = get_hash(key.as_bytes(), block_size);
         for _ in 0..3 {
-            assert_eq!(expected_hash, get_hash(key, block_size))
+            assert_eq!(expected_hash, get_hash(key.as_bytes(), block_size))
         }
     }
 }

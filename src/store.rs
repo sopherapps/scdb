@@ -1,4 +1,3 @@
-use core::option::Option::{None, Some};
 use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
 use std::io;
@@ -6,11 +5,14 @@ use std::path::Path;
 
 use memmap2::MmapMut;
 
-use crate::{dmap, fs};
+use core::option::Option::{None, Some};
+
+use crate::core::KeyValueEntry;
+use crate::{core, fs};
 
 pub struct Store {
     data_array: MmapMut,
-    header: dmap::DbFileHeader,
+    header: core::DbFileHeader,
     store_path: String,
 }
 
@@ -21,7 +23,7 @@ impl Store {
     /// Returns errors if it fails to generate the mapping
     /// See [mmap::generate_mapping]
     ///
-    /// [mmap::generate_mapping]: crate::dmap::mmap::generate_mapping
+    /// [mmap::generate_mapping]: crate::core::mmap::generate_mapping
     pub fn new(
         store_path: &str,
         max_keys: Option<u64>,
@@ -30,8 +32,8 @@ impl Store {
         let db_folder = Path::new(store_path);
         fs::initialize_file_db(db_folder);
         let db_file_path = db_folder.join("dump.scdb");
-        let data_array = dmap::generate_mapping(&db_file_path, max_keys, redundant_blocks)?;
-        let header = dmap::DbFileHeader::from_data_array(&data_array)?;
+        let data_array = core::generate_mapping(&db_file_path, max_keys, redundant_blocks)?;
+        let header = core::DbFileHeader::from_data_array(&data_array)?;
 
         let store = Self {
             data_array,
@@ -48,6 +50,53 @@ impl Store {
     }
 
     pub fn set(&mut self, k: &Vec<u8>, v: &Vec<u8>, ttl: Option<u64>) -> io::Result<()> {
+        let expiry = match ttl {
+            None => 0u64,
+            Some(expiry) => expiry,
+        };
+
+        let hash = core::get_hash(k, self.header.items_per_index_block) * 4;
+        let header_offset = 100; // 100 bytes header
+        let mut index_block_offset = 0u64;
+        let mut index_address = (index_block_offset + header_offset + hash) as usize;
+        let entry_offset = u32::from_be_bytes(core::extract_array::<4>(
+            &self.data_array[index_address..(index_address + 4)],
+        )?) as usize;
+
+        if entry_offset == 0 {
+            let kv = KeyValueEntry::new(k, v, expiry);
+            let last_offset = self.header.last_offset;
+            // FIXME: Consider using buffer pool management.
+            // https://www1.columbia.edu/sec/acis/db2/db2d0/db2d0122.htm
+            // https://www.ibm.com/docs/en/db2-for-zos/11?topic=storage-calculating-buffer-pool-size
+            // self.data_array.(kv.get_byte_array());
+            // self.data_array.inser;
+        }
+
+        // 2. Set `index_block_offset` to zero to start from the first block.
+        //     3. The `index_address` is set to `index_block_offset + 801 + hash`.
+        // 4. The 4-byte offset at the `index_address` offset is read. This is the first possible pointer to the key-value entry.
+        //     Let's call it `key_value_offset`.
+        // 5. If this `key_value_offset` is zero, this means that no value has been set for that key yet.
+        //     - So the key-value entry (with all its data including `key_size`, `expiry` (got from ttl from user), `value_size`
+        // , `value`, `deleted`) is appended to the end of the file at offset `last_offset`
+        // - the `last_offset` is then inserted at `index_address` in place of the zero
+        //     - the `last_offset` header is then updated
+        // to `last_offset + get_size_of_kv(kv)` [get_size_of_kv gets the total size of the entry in bits]
+        // 6. If this `key_value_offset` is non-zero, it is possible that the value for that key has already been set.
+        //     - retrieve the key at the given `key_value_offset`. (Do note that there is a 4-byte number `key_size` before the
+        // key. That number gives the size of the key).
+        // - if this key is the same as the key passed, we have to update it by deleting then inserting it again:
+        // - update the `deleted` of the key-value entry to 1
+        //     - The key-value entry (with all its data including `key_size`, `expiry` (got from ttl from user), `value_size`
+        // , `value`, `deleted`) is appended to the end of the file at offset `last_offset + 1`
+        // - the `last_offset + 1` is then inserted at `index_address` in place of the former offset
+        //     - the `last_offset` header is then updated to `last_offset + get_size_of_kv(kv)`
+        // - else increment the `index_block_offset` by `net_block_size_in_bits`
+        // - if the new `index_block_offset` is equal to or greater than the `key_values_start_point`, raise
+        // the `CollisionSaturatedError` error. We have run out of blocks without getting a free slot to add the
+        // key-value entry.
+        //     - else go back to step 3.
         todo!()
     }
 
