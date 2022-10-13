@@ -1,5 +1,3 @@
-extern crate core;
-
 pub use store::Store;
 
 mod core;

@@ -117,53 +117,23 @@ handle hash collisions.__
 #### 5. Compact
 
 Compaction can run automatically every few hours. During that time, the database would be locked.
-No read, nor write would be allowed.
+No read, nor write would be allowed. It can also be requested for by the user.
 
-1. Set `latest_compacted_offset` to `key_values_start_point`.
-2. Set `offset_to_compact` to `key_values_start_point`.
-3. If `offset_to_compact` is greater or equal to `last_offset`, compacting is done.
-    - truncate the mmapped file from `latest_compacted_offset` to `last_offset`
-      (TODO: how to do this without losing mappings)
-    - update `last_offset` to `latest_compacted_offset`
-    - stop and return (get out of loop or recursion)
-4. If the `deleted` in the key-value entry at `offset_to_compact` is 1 (i.e. deleted)
-   or `expiry` is greater or equal to the `current_timestamp`, get rid of it:
-    - increment the `offset_to_compact` by the `get_size_of_kv(kv)`
-    - go back to step 3 (continue with loop or recursion)
-5. If the `deleted` in the key-value entry at `offset_to_compact` is 0 (i.e. not deleted)
-   and `expiry` is less than the `current_timestamp`
-   and `offset_to_compact` is greater than `latest_compacted_offset`, shift this entry up:
-    - copy the key-value entry at `offset_to_compact` and paste it at offset `latest_compacted_offset`
-    - Run the key of this entry through a hashfunction with modulo `number_of_items_per_index_block`
-      and multiply by 4 to get the hashed value `hash` as a byte offset
-      then update the offset for this entry to be `latest_compacted_offset`. Do this:
-
-       <ol>
-           <li>Set `index_block_offset` to zero to start from the first block</li>
-           <li>The `index_address` is set to `index_block_offset + 100 + hash`</li>
-           <li>The 4-byte offset at the `index_address` offset is read. This is the first possible pointer to the key-value entry.
-              Let's call it `key_value_offset`.</li>
-           <li>If this `key_value_offset` is non-zero, it is possible that the value for that key exists</li>
-               <ul>
-                   <li>retrieve the key at the given `key_value_offset`. (Do note that there is a 4-byte number `key_size` before the
-                         key. That number gives the size of the key).</li>
-                   <li>if this key is the same as the key passed, we update its offset at `index_address` to `latest_compacted_offset`</li>
-                   <li>else increment the `index_block_offset` by `net_block_size`:</li>
-                       <ul>
-                           <li>if the new `index_block_offset` is equal to or greater than the `key_values_start_point`, raise
-                                  the `CorruptedDataError` error. We expected that offset to exist, but it did not.</li>
-                           <li>else go back to step (ii)</li>
-                       </ul>
-               </ul>
-       </ol>
-
-    - Increment `latest_compacted_offset` by `get_size_of_kv(kv)`
-    - Increment `offset_to_compact` by `get_size_of_kv(kv)`
-    - go back to step 3 (continue with loop or recursion)
-6. Else:
-    - Increment `latest_compacted_offset` by `get_size_of_kv(kv)`
-    - Increment `offset_to_compact` by `get_size_of_kv(kv)`
-    - go back to step 3 (continue with loop or recursion)
+1. Create new file
+2. Copy header into the new file
+3. Copy index into new file
+4. Read index_map into a map of <entry_offset, index_offset>
+5. scan key-value entries until offset is greater or equal to `file_size`
+    - if key-value offset does not exist in index_map, do nothing
+    - else copy that key-value entry to the new file,
+        - get the index_offset of that key-value entry from index_map and update new file's index with the new offset
+        - get the next offset by adding current offset to key-value entry's size
+        - seek to that offset and do the necessary
+6. Clear the buffers
+7. Update file_size to the new file's file size
+8. Point the buffer pool's file to that new file
+9. Delete the old file
+10. Rename the new file to the old file's name
 
 ##### Performance
 
