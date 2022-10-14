@@ -26,7 +26,7 @@ pub(crate) fn get_hash(key: &[u8], block_length: u64) -> u64 {
 mod test {
     use std::collections::HashMap;
 
-    use crate::core::hash::get_hash;
+    use crate::internal::hash::get_hash;
 
     #[test]
     fn get_hash_generates_unique_hashes() {

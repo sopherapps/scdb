@@ -1,5 +1,4 @@
 pub use store::Store;
 
-mod core;
-mod fs;
+mod internal;
 mod store;

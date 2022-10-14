@@ -1,18 +1,14 @@
-use std::collections::HashMap;
-use std::hash::BuildHasherDefault;
 use std::io;
 use std::path::Path;
 
 use memmap2::MmapMut;
 
-use core::option::Option::{None, Some};
-
-use crate::core::KeyValueEntry;
-use crate::{core, fs};
+use crate::internal;
+use crate::internal::{fs, KeyValueEntry};
 
 pub struct Store {
     data_array: MmapMut,
-    header: core::DbFileHeader,
+    header: internal::DbFileHeader,
     store_path: String,
 }
 
@@ -23,7 +19,7 @@ impl Store {
     /// Returns errors if it fails to generate the mapping
     /// See [mmap::generate_mapping]
     ///
-    /// [mmap::generate_mapping]: crate::core::mmap::generate_mapping
+    /// [mmap::generate_mapping]: crate::internal::mmap::generate_mapping
     pub fn new(
         store_path: &str,
         max_keys: Option<u64>,
@@ -32,8 +28,8 @@ impl Store {
         let db_folder = Path::new(store_path);
         fs::initialize_file_db(db_folder);
         let db_file_path = db_folder.join("dump.scdb");
-        let data_array = core::generate_mapping(&db_file_path, max_keys, redundant_blocks)?;
-        let header = core::DbFileHeader::from_data_array(&data_array)?;
+        let data_array = internal::generate_mapping(&db_file_path, max_keys, redundant_blocks)?;
+        let header = internal::DbFileHeader::from_data_array(&data_array)?;
 
         let store = Self {
             data_array,
@@ -55,11 +51,11 @@ impl Store {
             Some(expiry) => expiry,
         };
 
-        let hash = core::get_hash(k, self.header.items_per_index_block) * 4;
+        let hash = internal::get_hash(k, self.header.items_per_index_block) * 4;
         let header_offset = 100; // 100 bytes header
         let mut index_block_offset = 0u64;
         let mut index_address = (index_block_offset + header_offset + hash) as usize;
-        let entry_offset = u32::from_be_bytes(core::extract_array::<4>(
+        let entry_offset = u32::from_be_bytes(internal::extract_array::<4>(
             &self.data_array[index_address..(index_address + 4)],
         )?) as usize;
 

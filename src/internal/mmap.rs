@@ -5,7 +5,7 @@ use std::path::Path;
 
 use memmap2::{MmapMut, MmapOptions};
 
-use crate::core::entries::DbFileHeader;
+use crate::internal::entries::DbFileHeader;
 
 /// Memory maps the file at the given file path and returns the mapping
 ///

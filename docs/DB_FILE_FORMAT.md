@@ -12,10 +12,10 @@ following features:
   cross-platform way, we could use what [page_size crate](https://docs.rs/page_size/latest/page_size/) used.
 - All data is saved in bytes
 - It should have the following major sections:
-    - a 100-byte header to hold metadata for the database
-    - a series of consecutive index blocks. They are `round_up(max_keys / (block_size / 4))` where `(block_size / 4)` is
-      items in each index block since each item is a 4-byte offset (offset is described below).
-    - a series of key-value entries
+  - a 100-byte header to hold metadata for the database
+  - a series of consecutive index blocks. They are `round_up(max_keys / (block_size / 8))` where `(block_size / 8)` is
+    items in each index block since each item is a 8-byte offset (offset is described below).
+  - a series of key-value entries
 
 ![overview of database file](./overview_of_db_file.svg)
 
@@ -33,12 +33,12 @@ following features:
 - The index blocks each contain offsets where an offset is how far in bits from the start of the file that you will find
   the corresponding key-value entry.
 - Each key-value entry has the following parts all in binary format
-    - `KEY SIZE <the 4 byte unsigned integer showing number of bits for this key>`
-    - `KEY <the key>`
-    - `EXPIRY <the timestamp>` (optional)
-    - `DELETED <a 1 byte flag, 1 if deleted, 0 if not>`
-    - `VALUE SIZE <the 4 byte unsigned integer showing number of bits for this value>`
-    - `VALUE <the value in binary>`
+  - `SIZE <the 4 byte unsigned integer showing number of bits for this whole entry>`
+  - `KEY SIZE <the 4 byte unsigned integer showing number of bits for this key>`
+  - `KEY <the key>`
+  - `EXPIRY <the timestamp>` (optional)
+  - `DELETED <a 1 byte flag, 1 if deleted, 0 if not>`
+  - `VALUE <the value in binary>`
 
 ## Acknowledgements
 
