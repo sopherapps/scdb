@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io;
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 
-use crate::internal::utils;
+use crate::internal::{get_hash, utils};
 
-const KEY_VALUE_MIN_SIZE_IN_BYTES: u32 = 4 + 4 + 8 + 1;
+const KEY_VALUE_MIN_SIZE_IN_BYTES: u32 = 4 + 4 + 8;
+pub(crate) const INDEX_ENTRY_SIZE_IN_BYTES: u64 = 8;
+const HEADER_SIZE_IN_BYTES: u64 = 100;
 
 pub(crate) struct DbFileHeader {
     pub(crate) title: String,
@@ -24,7 +26,6 @@ pub(crate) struct KeyValueEntry<'a> {
     pub(crate) key_size: u32,
     pub(crate) key: &'a [u8],
     pub(crate) expiry: u64,
-    pub(crate) deleted: bool,
     pub(crate) value: &'a [u8],
 }
 
@@ -59,17 +60,21 @@ impl DbFileHeader {
     /// Computes the properties that depend on the user-defined/default properties and update them
     /// on self
     fn update_derived_props(&mut self) {
-        self.items_per_index_block = (self.block_size as f64 / 8.0).floor() as u64;
+        self.items_per_index_block =
+            (self.block_size as f64 / INDEX_ENTRY_SIZE_IN_BYTES as f64).floor() as u64;
         self.number_of_index_blocks = (self.max_keys as f64 / self.items_per_index_block as f64)
             as u64
             + self.redundant_blocks as u64;
-        self.last_offset = 100 + (self.items_per_index_block * 8 * self.number_of_index_blocks);
+        self.last_offset = HEADER_SIZE_IN_BYTES
+            + (self.items_per_index_block
+                * INDEX_ENTRY_SIZE_IN_BYTES
+                * self.number_of_index_blocks);
         self.key_values_start_point = self.last_offset;
-        self.net_block_size = self.items_per_index_block * 8;
+        self.net_block_size = self.items_per_index_block * INDEX_ENTRY_SIZE_IN_BYTES;
     }
 
     /// Retrieves the byte array that represents the header.
-    pub(crate) fn get_header_as_bytes(&self) -> Vec<u8> {
+    pub(crate) fn as_bytes(&self) -> Vec<u8> {
         self.title
             .as_bytes()
             .iter()
@@ -84,7 +89,8 @@ impl DbFileHeader {
     /// Creates a place holder for the index blocks.
     pub(crate) fn create_empty_index_blocks_bytes(&self) -> Vec<u8> {
         // each index entry is 8 bytes
-        let length = self.number_of_index_blocks * self.items_per_index_block * 8;
+        let length =
+            self.number_of_index_blocks * self.items_per_index_block * INDEX_ENTRY_SIZE_IN_BYTES;
         vec![0; length as usize]
     }
 
@@ -116,9 +122,38 @@ impl DbFileHeader {
     /// Extracts the header from a database file
     pub(crate) fn from_file(file: &mut File) -> io::Result<Self> {
         file.seek(SeekFrom::Start(0))?;
-        let mut buf: [u8; 100];
+        let mut buf = [0u8; HEADER_SIZE_IN_BYTES as usize];
         file.read(&mut buf)?;
         Self::from_data_array(&buf)
+    }
+
+    /// Computes the offset for the given key in the first index block.
+    /// It uses the meta data in this header
+    /// i.e. number of items per block and the `INDEX_ENTRY_SIZE_IN_BYTES`
+    pub(crate) fn get_index_offset(&self, key: &[u8]) -> u64 {
+        let hash = get_hash(key, self.items_per_index_block);
+        HEADER_SIZE_IN_BYTES + (hash * INDEX_ENTRY_SIZE_IN_BYTES)
+    }
+
+    /// Returns the index offset for the nth index block if `initial_offset` is the offset
+    /// in the top most index block
+    /// `n` starts at zero where zero is the top most index block
+    pub(crate) fn get_index_offset_in_nth_block(
+        &self,
+        initial_offset: u64,
+        n: u64,
+    ) -> io::Result<u64> {
+        if n >= self.number_of_index_blocks {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "block {} out of bounds of {} blocks",
+                    n, self.number_of_index_blocks
+                ),
+            ));
+        }
+
+        Ok(initial_offset + (self.net_block_size * n))
     }
 }
 
@@ -133,7 +168,6 @@ impl<'a> KeyValueEntry<'a> {
             key_size,
             key,
             expiry,
-            deleted: false,
             value,
         }
     }
@@ -149,8 +183,6 @@ impl<'a> KeyValueEntry<'a> {
         cursor += key_size as usize;
         let expiry = u64::from_be_bytes(extract_array(&data[cursor..8])?);
         cursor += 8;
-        let deleted = u8::from_be_bytes(extract_array(&data[cursor..1])?);
-        cursor += 1;
         let value_size = (size - key_size - KEY_VALUE_MIN_SIZE_IN_BYTES) as usize;
         let value = &data[cursor..value_size];
 
@@ -159,10 +191,22 @@ impl<'a> KeyValueEntry<'a> {
             key_size,
             key,
             expiry,
-            deleted: if deleted == 1 { true } else { false },
             value,
         };
         Ok(entry)
+    }
+
+    /// Retrieves the byte array that represents the key value entry.
+    pub(crate) fn as_bytes(&self) -> Vec<u8> {
+        self.size
+            .to_be_bytes()
+            .iter()
+            .chain(&self.key_size.to_be_bytes())
+            .chain(self.key)
+            .chain(&self.expiry.to_be_bytes())
+            .chain(self.value)
+            .map(|v| v.to_owned())
+            .collect()
     }
 }
 
@@ -208,7 +252,7 @@ pub(crate) fn get_index_as_reversed_map(index_bytes: &Vec<u8>) -> io::Result<Has
         let entry_offset = u64::from_be_bytes(extract_array(&index_bytes[i..i + 8])?);
         if entry_offset > 0 {
             // only non-zero entries are picked because zero signifies deleted or not yet inserted
-            map[&entry_offset] = 100 + i as u64;
+            map.insert(entry_offset, 100 + i as u64);
         }
 
         i += 8;

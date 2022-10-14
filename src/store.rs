@@ -1,39 +1,36 @@
 use std::io;
 use std::path::Path;
 
-use memmap2::MmapMut;
-
 use crate::internal;
-use crate::internal::{fs, KeyValueEntry};
+use crate::internal::INDEX_ENTRY_SIZE_IN_BYTES;
 
 pub struct Store {
-    data_array: MmapMut,
+    buffer_pool: internal::BufferPool,
     header: internal::DbFileHeader,
-    store_path: String,
 }
 
 impl Store {
     /// Creates a new store instance for the db found at `store_path`
-    ///
-    /// # Errors
-    /// Returns errors if it fails to generate the mapping
-    /// See [mmap::generate_mapping]
-    ///
-    /// [mmap::generate_mapping]: crate::internal::mmap::generate_mapping
     pub fn new(
         store_path: &str,
         max_keys: Option<u64>,
         redundant_blocks: Option<u16>,
+        pool_capacity: Option<usize>,
     ) -> io::Result<Self> {
         let db_folder = Path::new(store_path);
-        fs::initialize_file_db(db_folder);
+        internal::fs::initialize_file_db(db_folder);
         let db_file_path = db_folder.join("dump.scdb");
-        let data_array = internal::generate_mapping(&db_file_path, max_keys, redundant_blocks)?;
-        let header = internal::DbFileHeader::from_data_array(&data_array)?;
-
+        let mut buffer_pool = internal::BufferPool::new(
+            pool_capacity,
+            &db_file_path,
+            max_keys,
+            redundant_blocks,
+            None,
+        )?;
+        let header: internal::DbFileHeader =
+            internal::DbFileHeader::from_file(&mut buffer_pool.file)?;
         let store = Self {
-            data_array,
-            store_path: store_path.to_string(),
+            buffer_pool,
             header,
         };
 
@@ -45,55 +42,42 @@ impl Store {
         // todo!()
     }
 
-    pub fn set(&mut self, k: &Vec<u8>, v: &Vec<u8>, ttl: Option<u64>) -> io::Result<()> {
+    /// Sets the given key value in the store
+    pub fn set(&mut self, k: &[u8], v: &[u8], ttl: Option<u64>) -> io::Result<()> {
         let expiry = match ttl {
             None => 0u64,
             Some(expiry) => expiry,
         };
 
-        let hash = internal::get_hash(k, self.header.items_per_index_block) * 4;
-        let header_offset = 100; // 100 bytes header
-        let mut index_block_offset = 0u64;
-        let mut index_address = (index_block_offset + header_offset + hash) as usize;
-        let entry_offset = u32::from_be_bytes(internal::extract_array::<4>(
-            &self.data_array[index_address..(index_address + 4)],
-        )?) as usize;
+        let mut index_block = 0;
+        let index_offset = self.header.get_index_offset(k);
 
-        if entry_offset == 0 {
-            let kv = KeyValueEntry::new(k, v, expiry);
-            let last_offset = self.header.last_offset;
-            // FIXME: Consider using buffer pool management.
-            // https://www1.columbia.edu/sec/acis/db2/db2d0/db2d0122.htm
-            // https://www.ibm.com/docs/en/db2-for-zos/11?topic=storage-calculating-buffer-pool-size
-            // self.data_array.(kv.get_byte_array());
-            // self.data_array.inser;
+        while index_block <= self.header.number_of_index_blocks {
+            let index_offset = self
+                .header
+                .get_index_offset_in_nth_block(index_offset, index_block)?;
+            let kv_offset_in_bytes = self
+                .buffer_pool
+                .read_at(index_offset, INDEX_ENTRY_SIZE_IN_BYTES as usize)?;
+            let entry_offset = u64::from_be_bytes(internal::extract_array(&kv_offset_in_bytes)?);
+
+            if entry_offset == 0 || self.buffer_pool.addr_belongs_to_key(entry_offset, k)? {
+                let kv = internal::KeyValueEntry::new(k, v, expiry);
+                let mut kv_bytes = kv.as_bytes();
+                let prev_last_offset = self.buffer_pool.append(&mut kv_bytes)?;
+                self.buffer_pool
+                    .replace(index_offset, &prev_last_offset.to_be_bytes())?;
+                self.header.last_offset = self.buffer_pool.file_size;
+                return Ok(());
+            }
+
+            index_block += 1;
         }
 
-        // 2. Set `index_block_offset` to zero to start from the first block.
-        //     3. The `index_address` is set to `index_block_offset + 801 + hash`.
-        // 4. The 4-byte offset at the `index_address` offset is read. This is the first possible pointer to the key-value entry.
-        //     Let's call it `key_value_offset`.
-        // 5. If this `key_value_offset` is zero, this means that no value has been set for that key yet.
-        //     - So the key-value entry (with all its data including `key_size`, `expiry` (got from ttl from user), `value_size`
-        // , `value`, `deleted`) is appended to the end of the file at offset `last_offset`
-        // - the `last_offset` is then inserted at `index_address` in place of the zero
-        //     - the `last_offset` header is then updated
-        // to `last_offset + get_size_of_kv(kv)` [get_size_of_kv gets the total size of the entry in bits]
-        // 6. If this `key_value_offset` is non-zero, it is possible that the value for that key has already been set.
-        //     - retrieve the key at the given `key_value_offset`. (Do note that there is a 4-byte number `key_size` before the
-        // key. That number gives the size of the key).
-        // - if this key is the same as the key passed, we have to update it by deleting then inserting it again:
-        // - update the `deleted` of the key-value entry to 1
-        //     - The key-value entry (with all its data including `key_size`, `expiry` (got from ttl from user), `value_size`
-        // , `value`, `deleted`) is appended to the end of the file at offset `last_offset + 1`
-        // - the `last_offset + 1` is then inserted at `index_address` in place of the former offset
-        //     - the `last_offset` header is then updated to `last_offset + get_size_of_kv(kv)`
-        // - else increment the `index_block_offset` by `net_block_size_in_bits`
-        // - if the new `index_block_offset` is equal to or greater than the `key_values_start_point`, raise
-        // the `CollisionSaturatedError` error. We have run out of blocks without getting a free slot to add the
-        // key-value entry.
-        //     - else go back to step 3.
-        todo!()
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("CollisionSaturatedError: no free slot for key: {:?}", k),
+        ))
     }
 
     pub fn get(&self, k: &Vec<u8>) -> io::Result<Option<Vec<u8>>> {
@@ -122,7 +106,7 @@ mod tests {
     #[test]
     #[serial]
     fn set_and_read_multiple_key_value_pairs() {
-        let mut store = Store::new(STORE_PATH, None, None).expect("create store");
+        let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
         let keys = get_keys();
         let values = get_values();
 
@@ -142,7 +126,7 @@ mod tests {
     #[test]
     #[serial]
     fn set_and_delete_multiple_key_value_pairs() {
-        let mut store = Store::new(STORE_PATH, None, None).expect("create store");
+        let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
         let keys = get_keys();
         let values = get_values();
 
@@ -168,7 +152,7 @@ mod tests {
     #[test]
     #[serial]
     fn set_and_clear() {
-        let mut store = Store::new(STORE_PATH, None, None).expect("create store");
+        let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
         let keys = get_keys();
         let values = get_values();
 
@@ -189,7 +173,7 @@ mod tests {
     #[test]
     #[serial]
     fn persist_to_file() {
-        let mut store = Store::new(STORE_PATH, None, None).expect("create store");
+        let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
         let keys = get_keys();
         let values = get_values();
 
@@ -199,7 +183,7 @@ mod tests {
         store.close();
 
         // Open new store instance
-        let mut store = Store::new(STORE_PATH, None, None).expect("create store");
+        let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
 
         let received_values = get_values_for_keys(&store, &keys);
         let expected_values: Vec<io::Result<Option<Vec<u8>>>> =
@@ -215,7 +199,7 @@ mod tests {
     #[test]
     #[serial]
     fn persist_to_file_after_delete() {
-        let mut store = Store::new(STORE_PATH, None, None).expect("create store");
+        let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
         let keys = get_keys();
         let values = get_values();
 
@@ -229,7 +213,7 @@ mod tests {
         store.close();
 
         // Open new store instance
-        let mut store = Store::new(STORE_PATH, None, None).expect("create store");
+        let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
 
         let received_values = get_values_for_keys(&store, &keys);
         let mut expected_values: Vec<io::Result<Option<Vec<u8>>>> =
@@ -248,7 +232,7 @@ mod tests {
     #[test]
     #[serial]
     fn persist_to_file_after_clear() {
-        let mut store = Store::new(STORE_PATH, None, None).expect("create store");
+        let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
         let keys = get_keys();
         let values = get_values();
 
@@ -260,7 +244,7 @@ mod tests {
         store.close();
 
         // Open new store instance
-        let mut store = Store::new(STORE_PATH, None, None).expect("create store");
+        let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
 
         let received_values = get_values_for_keys(&store, &keys);
         let expected_values: Vec<io::Result<Option<Vec<u8>>>> =
@@ -276,7 +260,7 @@ mod tests {
     #[test]
     #[serial]
     fn close_flushes_the_memmapped_filed() {
-        let mut store = Store::new(STORE_PATH, None, None).expect("create store");
+        let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
 
         // Close the store
         store.close();

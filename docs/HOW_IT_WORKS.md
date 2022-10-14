@@ -22,10 +22,10 @@ There are five main operations
 #### 2. Set
 
 1. The key supplied is run through a hashfunction with modulo `number_of_items_per_index_block`
-   and answer multiplied by 4 to get the byte offset. Let the hashed value be `hash`
+   and answer multiplied by 8 to get the byte offset. Let the hashed value be `hash`
 2. Set `index_block_offset` to zero to start from the first block.
 3. The `index_address` is set to `index_block_offset + 100 + hash`.
-4. The 4-byte offset at the `index_address` offset is read. This is the first possible pointer to the key-value entry.
+4. The 8-byte offset at the `index_address` offset is read. This is the first possible pointer to the key-value entry.
    Let's call it `key_value_offset`.
 5. If this `key_value_offset` is zero, this means that no value has been set for that key yet.
     - So the key-value entry (with all its data including `key_size`, `expiry` (got from ttl from user), `value_size`
@@ -34,10 +34,10 @@ There are five main operations
     - the `last_offset` header is then updated
       to `last_offset + get_size_of_kv(kv)` [get_size_of_kv gets the total size of the entry in bits]
 6. If this `key_value_offset` is non-zero, it is possible that the value for that key has already been set.
-    - retrieve the key at the given `key_value_offset`. (Do note that there is a 4-byte number `key_size` before the
-      key. That number gives the size of the key).
-    - if this key is the same as the key passed, we have to update it by deleting then inserting it again:
-        - update the `deleted` of the key-value entry to 1
+    - retrieve the key at the given `key_value_offset`. (Do note that there is a 4-byte number `size` before the
+      key. That number gives the size of the key-value entry).
+    - if this key is the same as the key passed, we have to update it appending it to the bottom of file and overwriting
+      its index value:
         - The key-value entry (with all its data including `key_size`, `expiry` (got from ttl from user), `value_size`
           , `value`, `deleted`) is appended to the end of the file at offset `last_offset`
         - the `last_offset` is then inserted at `index_address` in place of the former offset
@@ -49,13 +49,14 @@ There are five main operations
         - else go back to step 3.
 
 __Note: this uses a form of [separate chaining](https://www.geeksforgeeks.org/hashing-set-2-separate-chaining/) to
-handle hash collisions.__
+handle hash collisions. Having multiple index blocks is a form of separate chaining__
 
 ##### Performance
 
-- This operation is O(k) where k is the `number_of_index_blocks`.
-- The key-value entry is not expected to be copied as it will be consumed by this operation. About 4 4-byte integers are
-  allocated on the stack.
+- Time complexity: This operation is O(k) where k is the `number_of_index_blocks`.
+- Space complexity: This operation is O(kn+m) where n = key length, m = value length and k = `number_of_index_blocks`.
+  The key-value entry is copied into a contiguous byte array before insertion
+  and if the hash for the given key already has keys associated with it, each will be allocated in memory thus `kn`.
 
 ##### Caveats
 
@@ -63,7 +64,7 @@ handle hash collisions.__
   We thus have to throw a `CollisionSaturatedError` and abort inserting the key. This means that the occurrence of such
   errors will increase in frequency as the number of keys comes closer to the `max_keys` value.
   One possible remedy to this is to add a more redundant index block(s) i.e. increase `redundant_blocks`. Keep in mind
-  that this consumes extra disk space.
+  that this consumes extra disk and memory space.
 
 #### 3. Delete
 

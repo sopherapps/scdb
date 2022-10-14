@@ -10,14 +10,16 @@ use crate::internal::entries::{
 use crate::internal::utils::get_vm_page_size;
 use crate::internal::{DbFileHeader, KeyValueEntry};
 
+const DEFAULT_POOL_CAPACITY: usize = 5;
+
 pub(crate) struct BufferPool {
     capacity: usize,
     buffer_size: usize,
     // These are used only for reads
     buffers: VecDeque<Buffer>,
-    file: File,
+    pub(crate) file: File,
     file_path: PathBuf,
-    file_size: u64,
+    pub(crate) file_size: u64,
 }
 
 pub(crate) struct Buffer {
@@ -30,7 +32,7 @@ impl BufferPool {
     /// Creates a new BufferPool with the given `capacity` number of Buffers and
     /// for the file at the given path (creating it if necessary)
     pub(crate) fn new(
-        capacity: usize,
+        capacity: Option<usize>,
         file_path: &Path,
         max_keys: Option<u64>,
         redundant_blocks: Option<u16>,
@@ -38,6 +40,11 @@ impl BufferPool {
     ) -> io::Result<Self> {
         let buffer_size = match buffer_size {
             None => get_vm_page_size() as usize,
+            Some(v) => v,
+        };
+
+        let capacity = match capacity {
+            None => DEFAULT_POOL_CAPACITY,
             Some(v) => v,
         };
 
@@ -68,15 +75,16 @@ impl BufferPool {
     }
 
     /// Appends a given data array to the file attached to this buffer pool
-    pub(crate) fn append(&mut self, data: &mut Vec<u8>) -> io::Result<()> {
-        for mut buf in &self.buffers {
-            if buf.contains(self.file_size) {
-                buf.append(data);
-                self.file_size = buf.left_offset;
+    /// It returns the address where the data was appended
+    pub(crate) fn append(&mut self, data: &mut Vec<u8>) -> io::Result<u64> {
+        for i in 0..self.buffers.len() {
+            if self.buffers[i].contains(self.file_size) {
+                let addr = self.buffers[i].append(data);
+                self.file_size = self.buffers[i].left_offset;
                 self.file.seek(SeekFrom::End(0))?;
                 self.file.write_all(data)?;
                 self.update_file_last_offset()?;
-                return Ok(());
+                return Ok(addr);
             }
         }
 
@@ -86,7 +94,7 @@ impl BufferPool {
         self.file_size = new_file_size;
         self.update_file_last_offset()?;
 
-        Ok(())
+        Ok(start)
     }
 
     /// Updates the last_offset value in the Header of the database file
@@ -102,9 +110,9 @@ impl BufferPool {
     /// could have a different length from the previous one, append it to the bottom
     /// then overwrite the previous offset in the index with the offset of the new entry
     pub(crate) fn replace(&mut self, address: u64, data: &[u8]) -> io::Result<()> {
-        for mut buf in &self.buffers {
-            if buf.contains(address) {
-                buf.replace(address, data.to_vec());
+        for i in 0..self.buffers.len() {
+            if self.buffers[i].contains(address) {
+                self.buffers[i].replace(address, data.to_vec());
                 self.file.seek(SeekFrom::Start(address))?;
                 self.file.write_all(data)?;
                 return Ok(());
@@ -129,7 +137,7 @@ impl BufferPool {
             .append(true)
             .read(true)
             .create(true)
-            .open(new_file_path)?;
+            .open(&new_file_path)?;
 
         let header: DbFileHeader = DbFileHeader::from_file(&mut self.file)?;
         let index_bytes_array = get_index_as_byte_array(&mut self.file, &header)?;
@@ -169,7 +177,7 @@ impl BufferPool {
     /// Otherwise, it returns None
     /// This is to handle hash collisions.
     pub(crate) fn get_value(&mut self, address: u64, key: &[u8]) -> io::Result<Option<Vec<u8>>> {
-        for mut buf in &self.buffers {
+        for buf in &self.buffers {
             if buf.contains(address) {
                 return buf.get_value(address, key);
             }
@@ -185,21 +193,72 @@ impl BufferPool {
 
         let entry: KeyValueEntry = KeyValueEntry::from_data_array(&buf, 0)?;
 
-        // update buffers
-        self.buffers.push_back(Buffer::new(address, buf));
-
         let value = if entry.key == key {
             Some(entry.value.to_vec())
         } else {
             None
         };
 
+        // update buffers
+        self.buffers.push_back(Buffer::new(address, buf));
+
         Ok(value)
+    }
+
+    /// Checks to see if the given address is for the given key
+    pub(crate) fn addr_belongs_to_key(&mut self, address: u64, key: &[u8]) -> io::Result<bool> {
+        for buf in &self.buffers {
+            if buf.contains(address) {
+                return buf.addr_belongs_to_key(address, key);
+            }
+        }
+
+        if self.buffers.len() >= self.capacity {
+            self.buffers.pop_front();
+        }
+
+        let mut buf: Vec<u8> = Vec::with_capacity(self.buffer_size);
+        self.file.seek(SeekFrom::Start(address))?;
+        self.file.read(&mut buf)?;
+
+        let entry: KeyValueEntry = KeyValueEntry::from_data_array(&buf, 0)?;
+
+        let value = entry.key == key;
+
+        // update buffers
+        self.buffers.push_back(Buffer::new(address, buf));
+
+        Ok(value)
+    }
+
+    /// Reads an arbitrary array at the given address and of given size and returns it
+    pub(crate) fn read_at(&mut self, address: u64, size: usize) -> io::Result<Vec<u8>> {
+        for i in 0..self.buffers.len() {
+            if self.buffers[i].contains(address) {
+                return self.buffers[i].read_at(address, size);
+            }
+        }
+
+        if self.buffers.len() >= self.capacity {
+            self.buffers.pop_front();
+        }
+
+        let mut buf: Vec<u8> = Vec::with_capacity(self.buffer_size);
+        self.file.seek(SeekFrom::Start(address))?;
+        self.file.read(&mut buf)?;
+
+        let data_array = buf[0..size].to_vec();
+
+        // update buffers
+        self.buffers.push_back(Buffer::new(address, buf));
+
+        Ok(data_array)
     }
 }
 
 impl Buffer {
     /// Creates a new Buffer with the given left_offset
+    #[inline]
     fn new(left_offset: u64, data: Vec<u8>) -> Self {
         let right_offset = left_offset + data.len() as u64;
         Self {
@@ -215,13 +274,18 @@ impl Buffer {
     }
 
     /// Appends the data to the end of the array
-    fn append(&mut self, data: &mut Vec<u8>) {
+    /// It returns the address (or offset) where the data was appended
+    #[inline]
+    fn append(&mut self, data: &mut Vec<u8>) -> u64 {
         let data_length = data.len();
         self.data.append(data);
+        let prev_right_offset = self.right_offset;
         self.right_offset += data_length as u64;
+        return prev_right_offset;
     }
 
     /// Replaces the data at the given address with the new data
+    #[inline]
     fn replace(&mut self, address: u64, data: Vec<u8>) {
         let data_length = data.len();
         let start = address as usize;
@@ -232,8 +296,9 @@ impl Buffer {
     /// Returns the Some(Value) at the given address if the key there corresponds to the given key
     /// Otherwise, it returns None
     /// This is to handle hash collisions.
+    #[inline]
     fn get_value(&self, address: u64, key: &[u8]) -> io::Result<Option<Vec<u8>>> {
-        let offset = ((address - self.left_offset) / 8) as usize;
+        let offset = (address - self.left_offset) as usize;
         let entry = KeyValueEntry::from_data_array(&self.data, offset)?;
         let value = if entry.key == key {
             Some(entry.value.to_vec())
@@ -243,6 +308,22 @@ impl Buffer {
 
         Ok(value)
     }
+
+    /// Reads an arbitrary array at the given address and of given size and returns it
+    #[inline]
+    fn read_at(&mut self, address: u64, size: usize) -> io::Result<Vec<u8>> {
+        let offset = (address - self.left_offset) as usize;
+        let data_array = self.data[offset..size].to_vec();
+        Ok(data_array)
+    }
+
+    /// Checks to see if the given address is for the given key
+    #[inline]
+    fn addr_belongs_to_key(&self, address: u64, key: &[u8]) -> io::Result<bool> {
+        let offset = (address - self.left_offset) as usize;
+        let entry = KeyValueEntry::from_data_array(&self.data, offset)?;
+        Ok(entry.key == key)
+    }
 }
 
 /// Initializes a new database file, giving it the header and the index place holders
@@ -251,7 +332,7 @@ fn initialize_db_file(
     header: &DbFileHeader,
     index_bytes: Option<Vec<u8>>,
 ) -> io::Result<()> {
-    let header_bytes = header.get_header_as_bytes();
+    let header_bytes = header.as_bytes();
     debug_assert_eq!(header_bytes.len(), 100);
 
     let index_block_bytes = match index_bytes {
