@@ -111,8 +111,10 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
 
 ##### Performance
 
-- This operation is O(k) where k is the `number_of_index_blocks`.
-- About 3 4-byte integers are allocated on the stack.
+- Time complexity: This operation is O(k) where k is the `number_of_index_blocks`.
+- Space complexity: This operation is O(kn) where n = buffer size (default is virtual memory page size), and k
+  = `number_of_index_blocks`.
+  if the hash for the given key is not already buffered, we read a new block from file into memory.
 
 #### 5. Compact
 
