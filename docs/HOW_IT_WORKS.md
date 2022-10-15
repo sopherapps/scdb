@@ -69,17 +69,15 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
 #### 3. Delete
 
 1. The key supplied is run through a hashfunction with modulo `number_of_items_per_index_block`
-   and answer multiplied by 4 to get the byte offset. Let the hashed value be `hash`.
+   and answer multiplied by 8 to get the byte offset. Let the hashed value be `hash`.
 2. Set `index_block_offset` to zero to start from the first block.
 3. The `index_address` is set to `index_block_offset + 100 + hash`.
-4. The 4-byte offset at the `index_address` offset is read. This is the first possible pointer to the key-value entry.
+4. The 8-byte offset at the `index_address` offset is read. This is the first possible pointer to the key-value entry.
    Let's call it `key_value_offset`.
 5. If this `key_value_offset` is non-zero, it is possible that the value for that key exists.
-    - retrieve the key at the given `key_value_offset`. (Do note that there is a 4-byte number `key_size` before the
-      key. That number gives the size of the key).
-    - if this key is the same as the key passed, we delete it:
-        - update the `deleted` of the key-value entry to 1
-        - zero is then inserted at `index_address` in place of the former offset
+    - retrieve the key at the given `key_value_offset`.
+        - if this key is the same as the key passed, we delete it:
+            - zero is then inserted at `index_address` in place of the former offset and exit
     - else increment the `index_block_offset` by `net_block_size`
         - if the new `index_block_offset` is equal to or greater than the `key_values_start_point`, stop and return.
           The key does not exist.
@@ -87,8 +85,12 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
 
 ##### Performance
 
-- This operation is O(k) where k is the `number_of_index_blocks`.
-- About 4 4-byte integers are allocated on the stack.
+- Time complexity: This operation is O(k) where k is the `number_of_index_blocks`.
+- Space complexity: This operation is O(kn) where n = buffer size (default is virtual memory page size), and k
+  = `number_of_index_blocks`. The hash for the key is checked for each index block, until a block is found that contains
+  the key.
+  If the hash for the given key is not already buffered, we read a new block from file into memory.
+  The worst case is when the key is non-existent and there were no buffers already in memory.
 
 #### 4. Get
 
@@ -113,8 +115,10 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
 
 - Time complexity: This operation is O(k) where k is the `number_of_index_blocks`.
 - Space complexity: This operation is O(kn) where n = buffer size (default is virtual memory page size), and k
-  = `number_of_index_blocks`.
-  if the hash for the given key is not already buffered, we read a new block from file into memory.
+  = `number_of_index_blocks`. The hash for the key is checked for each index block, until a block is found that contains
+  the key.
+  If the hash for the given key is not already buffered, we read a new block from file into memory.
+  The worst case is when the key is non-existent and there were no buffers already in memory.
 
 #### 5. Compact
 

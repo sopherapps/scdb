@@ -115,8 +115,32 @@ impl Store {
         Ok(None)
     }
 
-    pub fn delete(&mut self, k: &Vec<u8>) -> io::Result<()> {
-        todo!()
+    /// Deletes the key-value for the given key
+    pub fn delete(&mut self, k: &[u8]) -> io::Result<()> {
+        let mut index_block = 0;
+        let index_offset = self.header.get_index_offset(k);
+
+        while index_block < self.header.number_of_index_blocks {
+            let index_offset = self
+                .header
+                .get_index_offset_in_nth_block(index_offset, index_block)?;
+            let kv_offset_in_bytes = self
+                .buffer_pool
+                .read_at(index_offset, INDEX_ENTRY_SIZE_IN_BYTES as usize)?;
+            let entry_offset = u64::from_be_bytes(internal::extract_array(&kv_offset_in_bytes)?);
+
+            if entry_offset != 0 && self.buffer_pool.addr_belongs_to_key(entry_offset, k)? {
+                // erase the index
+                self.buffer_pool
+                    .replace(index_offset, &0u64.to_be_bytes())?;
+
+                return Ok(());
+            }
+
+            index_block += 1;
+        }
+
+        Ok(())
     }
 
     pub fn clear(&mut self) -> io::Result<()> {
