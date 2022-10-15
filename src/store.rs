@@ -141,11 +141,19 @@ impl Store {
     pub fn clear(&mut self) -> io::Result<()> {
         self.buffer_pool.clear_file()
     }
+
+    /// Compact the data in the file
+    pub fn compact(&mut self) -> io::Result<()> {
+        self.buffer_pool.compact_file()
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Debug;
+    use std::fs::OpenOptions;
     use std::io;
+    use std::io::{Seek, SeekFrom};
 
     use serial_test::serial;
 
@@ -161,15 +169,39 @@ mod tests {
         let keys = get_keys();
         let values = get_values();
 
-        insert_test_data(&mut store, &keys, &values);
+        insert_test_data(&mut store, &keys, &values, None);
         let received_values = get_values_for_keys(&mut store, &keys);
 
-        let expected_values: Vec<io::Result<Option<Vec<u8>>>> =
-            values.iter().map(|v| Ok(Some(v.clone()))).collect();
+        let expected_values = wrap_values_in_result(&values);
+        assert_list_eq(&expected_values, &received_values);
+    }
 
-        for (got, expected) in received_values.into_iter().zip(expected_values) {
-            assert_eq!(got.unwrap(), expected.unwrap());
-        }
+    #[test]
+    #[serial]
+    fn set_and_update() {
+        let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
+        store.clear().expect("store failed to clear");
+        let keys = get_keys();
+        let values = get_values();
+        let unchanged_values = values[2..].to_vec();
+        let updated_keys = keys[0..2].to_vec();
+        let updated_values: Vec<Vec<u8>> = values[0..2]
+            .iter()
+            .map(|v| v.iter().chain(b"bear").map(|v| v.to_owned()).collect())
+            .collect();
+
+        insert_test_data(&mut store, &keys, &values, None);
+        insert_test_data(&mut store, &updated_keys, &updated_values, None);
+        let received_values = get_values_for_keys(&mut store, &keys);
+        let received_unchanged_values = &received_values[2..];
+        let received_updated_values = &received_values[0..2];
+
+        // unchanged
+        let expected_unchanged_values = wrap_values_in_result(&unchanged_values);
+        let expected_updated_values = wrap_values_in_result(&updated_values);
+
+        assert_list_eq(&expected_unchanged_values, &received_unchanged_values);
+        assert_list_eq(&expected_updated_values, &received_updated_values);
     }
 
     #[test]
@@ -182,19 +214,15 @@ mod tests {
 
         let keys_to_delete = keys[2..].to_vec();
 
-        insert_test_data(&mut store, &keys, &values);
+        insert_test_data(&mut store, &keys, &values, None);
         delete_keys(&mut store, &keys_to_delete);
 
         let received_values = get_values_for_keys(&mut store, &keys);
-        let mut expected_values: Vec<io::Result<Option<Vec<u8>>>> =
-            values[..2].iter().map(|v| Ok(Some(v.clone()))).collect();
+        let mut expected_values = wrap_values_in_result(&values[..2]);
         for _ in 0..keys_to_delete.len() {
             expected_values.push(Ok(None));
         }
-
-        for (got, expected) in received_values.into_iter().zip(expected_values) {
-            assert_eq!(got.unwrap(), expected.unwrap());
-        }
+        assert_list_eq(&expected_values, &received_values);
     }
 
     #[test]
@@ -205,16 +233,13 @@ mod tests {
         let keys = get_keys();
         let values = get_values();
 
-        insert_test_data(&mut store, &keys, &values);
+        insert_test_data(&mut store, &keys, &values, None);
         store.clear().expect("store cleared");
 
         let received_values = get_values_for_keys(&mut store, &keys);
         let expected_values: Vec<io::Result<Option<Vec<u8>>>> =
             keys.iter().map(|_| Ok(None)).collect();
-
-        for (got, expected) in received_values.into_iter().zip(expected_values) {
-            assert_eq!(got.unwrap(), expected.unwrap());
-        }
+        assert_list_eq(&expected_values, &received_values);
     }
 
     #[test]
@@ -227,18 +252,14 @@ mod tests {
         let keys = get_keys();
         let values = get_values();
 
-        insert_test_data(&mut store, &keys, &values);
+        insert_test_data(&mut store, &keys, &values, None);
 
         // Open new store instance
         let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
 
         let received_values = get_values_for_keys(&mut store, &keys);
-        let expected_values: Vec<io::Result<Option<Vec<u8>>>> =
-            values.iter().map(|v| Ok(Some(v.clone()))).collect();
-
-        for (got, expected) in received_values.into_iter().zip(expected_values) {
-            assert_eq!(got.unwrap(), expected.unwrap());
-        }
+        let expected_values = wrap_values_in_result(&values);
+        assert_list_eq(&expected_values, &received_values);
     }
 
     #[test]
@@ -251,22 +272,18 @@ mod tests {
 
         let keys_to_delete = keys[2..].to_vec();
 
-        insert_test_data(&mut store, &keys, &values);
+        insert_test_data(&mut store, &keys, &values, None);
         delete_keys(&mut store, &keys_to_delete);
 
         // Open new store instance
         let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
 
         let received_values = get_values_for_keys(&mut store, &keys);
-        let mut expected_values: Vec<io::Result<Option<Vec<u8>>>> =
-            values[..2].iter().map(|v| Ok(Some(v.clone()))).collect();
+        let mut expected_values = wrap_values_in_result(&values[..2]);
         for _ in 0..keys_to_delete.len() {
             expected_values.push(Ok(None));
         }
-
-        for (got, expected) in received_values.into_iter().zip(expected_values) {
-            assert_eq!(got.unwrap(), expected.unwrap());
-        }
+        assert_list_eq(&expected_values, &received_values);
     }
 
     #[test]
@@ -277,7 +294,7 @@ mod tests {
         let keys = get_keys();
         let values = get_values();
 
-        insert_test_data(&mut store, &keys, &values);
+        insert_test_data(&mut store, &keys, &values, None);
         store.clear().expect("store failed to clear");
 
         // Open new store instance
@@ -294,13 +311,43 @@ mod tests {
 
     #[test]
     #[serial]
-    fn close_flushes_the_memmapped_filed() {
+    fn compact_removes_deleted_and_expired_filed() {
         let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
+        store.clear().expect("store failed to clear");
+        let keys = get_keys();
+        let values = get_values();
+        let expired_values = values[0..2].to_vec();
+        let expired_keys = keys[0..2].to_vec();
 
-        // Close the store
-        store.close();
+        insert_test_data(&mut store, &keys, &values, None);
+        insert_test_data(&mut store, &expired_keys, &expired_values, Some(0));
 
-        todo!()
+        let initial_file_size = store
+            .buffer_pool
+            .file
+            .seek(SeekFrom::End(0))
+            .expect("failed to seek in file");
+
+        store.compact().expect("failed to compact");
+
+        let received_values = get_values_for_keys(&mut store, &keys);
+        let received_unchanged_values = &received_values[2..];
+        let received_expired_values = &received_values[0..2];
+
+        // unchanged
+        let expected_unchanged_values = wrap_values_in_result(&values[2..]);
+        let expected_expired_values: Vec<io::Result<Option<Vec<u8>>>> =
+            expired_keys.iter().map(|_| Ok(None)).collect();
+
+        let final_file_size = store
+            .buffer_pool
+            .file
+            .seek(SeekFrom::End(0))
+            .expect("failed to seek in file");
+
+        assert_list_eq(&expected_unchanged_values, &received_unchanged_values);
+        assert_list_eq(&expected_expired_values, &received_expired_values);
+        assert!(initial_file_size > final_file_size);
     }
 
     /// Deletes the given keys in the store
@@ -326,10 +373,15 @@ mod tests {
     }
 
     /// Inserts test data into the store
-    fn insert_test_data(store: &mut Store, keys: &Vec<Vec<u8>>, values: &Vec<Vec<u8>>) {
+    fn insert_test_data(
+        store: &mut Store,
+        keys: &Vec<Vec<u8>>,
+        values: &Vec<Vec<u8>>,
+        ttl: Option<u64>,
+    ) {
         for (k, v) in keys.iter().zip(values) {
             store
-                .set(k, v, None)
+                .set(k, v, ttl)
                 .expect(&format!("set key {:?}, value {:?}", k, v));
         }
     }
@@ -348,5 +400,22 @@ mod tests {
             .into_iter()
             .map(|v| v.to_string().into_bytes())
             .collect()
+    }
+
+    /// Wraps values in Result<Option<T>>
+    fn wrap_values_in_result(values: &[Vec<u8>]) -> Vec<io::Result<Option<Vec<u8>>>> {
+        values.iter().map(|v| Ok(Some(v.clone()))).collect()
+    }
+
+    /// Asserts that two lists are equal
+    fn assert_list_eq<T>(
+        expected_list: &[io::Result<Option<T>>],
+        got_list: &[io::Result<Option<T>>],
+    ) where
+        T: Debug + PartialEq,
+    {
+        for (got, expected) in got_list.into_iter().zip(expected_list) {
+            assert_eq!(got.as_ref().unwrap(), expected.as_ref().unwrap());
+        }
     }
 }
