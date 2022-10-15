@@ -56,6 +56,8 @@ Here are those that have been developed:
 - [ ] Make the key hashing point to offsets on the memory-mapped database file
 - [ ] Add benchmarks
 - [ ] compare benchmarks with those of redis, sqlite, lmdb etc.
+- [ ] Add locks (smaller locks are preferred)
+- [ ] Add compacting repeated task (say every hour or as user defined in store.)
 
 ### How to Test
 
