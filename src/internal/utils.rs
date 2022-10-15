@@ -1,5 +1,6 @@
 #[cfg(windows)]
 use std::mem;
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
@@ -33,4 +34,9 @@ pub(crate) fn get_current_timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .expect("System time is poorly configured");
     since_the_epoch.as_secs()
+}
+
+/// Creates the database folder if it does not exist
+pub(crate) fn initialize_db_folder(store_path: &Path) {
+    let _ = std::fs::create_dir_all(store_path);
 }

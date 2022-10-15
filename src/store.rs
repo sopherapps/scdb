@@ -1,8 +1,9 @@
 use std::io;
+use std::ops::DerefMut;
 use std::path::Path;
 
 use crate::internal;
-use crate::internal::INDEX_ENTRY_SIZE_IN_BYTES;
+use crate::internal::{acquire_lock, INDEX_ENTRY_SIZE_IN_BYTES};
 
 pub struct Store {
     buffer_pool: internal::BufferPool,
@@ -18,17 +19,19 @@ impl Store {
         pool_capacity: Option<usize>,
     ) -> io::Result<Self> {
         let db_folder = Path::new(store_path);
-        internal::fs::initialize_file_db(db_folder);
+        internal::initialize_db_folder(db_folder);
         let db_file_path = db_folder.join("dump.scdb");
-        let mut buffer_pool = internal::BufferPool::new(
+        let buffer_pool = internal::BufferPool::new(
             pool_capacity,
             &db_file_path,
             max_keys,
             redundant_blocks,
             None,
         )?;
-        let header: internal::DbFileHeader =
-            internal::DbFileHeader::from_file(&mut buffer_pool.file)?;
+        let mut file = acquire_lock!(buffer_pool.file)?;
+        let header: internal::DbFileHeader = internal::DbFileHeader::from_file(file.deref_mut())?;
+        drop(file);
+
         let store = Self {
             buffer_pool,
             header,
@@ -322,13 +325,15 @@ mod tests {
         insert_test_data(&mut store, &keys, &values, None);
         insert_test_data(&mut store, &expired_keys, &expired_values, Some(0));
 
-        let initial_file_size = store
-            .buffer_pool
-            .file
-            .seek(SeekFrom::End(0))
-            .expect("failed to seek in file");
+        let mut file = acquire_lock!(store.buffer_pool.file).expect("get lock on db file");
+        let initial_file_size = file.seek(SeekFrom::End(0)).expect("seek in file");
+        drop(file);
+        let initial_cached_size_guard =
+            acquire_lock!(store.buffer_pool.file_size).expect("get lock on file_size");
+        let initial_cached_size = *initial_cached_size_guard;
+        drop(initial_cached_size_guard);
 
-        store.compact().expect("failed to compact");
+        store.compact().expect("compact");
 
         let received_values = get_values_for_keys(&mut store, &keys);
         let received_unchanged_values = &received_values[2..];
@@ -339,14 +344,19 @@ mod tests {
         let expected_expired_values: Vec<io::Result<Option<Vec<u8>>>> =
             expired_keys.iter().map(|_| Ok(None)).collect();
 
-        let final_file_size = store
-            .buffer_pool
-            .file
-            .seek(SeekFrom::End(0))
-            .expect("failed to seek in file");
+        let mut file =
+            acquire_lock!(store.buffer_pool.file).expect("failed to get lock on db file");
+        let final_file_size = file.seek(SeekFrom::End(0)).expect("failed to seek in file");
+        drop(file);
+        let final_cached_size_guard =
+            acquire_lock!(store.buffer_pool.file_size).expect("get lock on file_size");
+        let final_cached_size = *final_cached_size_guard;
+        drop(final_cached_size_guard);
 
         assert_list_eq(&expected_unchanged_values, &received_unchanged_values);
         assert_list_eq(&expected_expired_values, &received_expired_values);
+        assert_eq!(initial_file_size, initial_cached_size);
+        assert_eq!(final_file_size, final_cached_size);
         assert!(initial_file_size > final_file_size);
     }
 

@@ -241,7 +241,6 @@ pub(crate) fn get_index_as_byte_array(
 ) -> io::Result<Vec<u8>> {
     let size = header.net_block_size * header.number_of_index_blocks;
     let mut data = Vec::with_capacity(size as usize);
-    // FIXME: Consider using BufferReader
     file.seek(SeekFrom::Start(100))?;
     file.read(&mut data)?;
     Ok(data)

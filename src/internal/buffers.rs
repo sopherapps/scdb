@@ -1,12 +1,15 @@
 use std::collections::{HashMap, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::{fs, io};
 
 use crate::internal::entries::{
     get_index_as_byte_array, get_index_as_reversed_map, read_kv_bytes_from_file,
 };
+use crate::internal::macros::acquire_lock;
 use crate::internal::utils::get_vm_page_size;
 use crate::internal::{DbFileHeader, KeyValueEntry};
 
@@ -23,10 +26,10 @@ pub(crate) struct BufferPool {
     max_keys: Option<u64>,
     redundant_blocks: Option<u16>,
     // These are used only for reads
-    buffers: VecDeque<Buffer>,
-    pub(crate) file: File,
+    buffers: Mutex<VecDeque<Buffer>>,
+    pub(crate) file: Mutex<File>,
     file_path: PathBuf,
-    pub(crate) file_size: u64,
+    pub(crate) file_size: Mutex<u64>,
 }
 
 pub(crate) struct Buffer {
@@ -74,9 +77,9 @@ impl BufferPool {
             buffer_size,
             max_keys,
             redundant_blocks,
-            buffers: VecDeque::with_capacity(capacity),
-            file,
-            file_size,
+            buffers: Mutex::new(VecDeque::with_capacity(capacity)),
+            file: Mutex::new(file),
+            file_size: Mutex::new(file_size),
             file_path: file_path.into(),
         };
 
@@ -86,32 +89,25 @@ impl BufferPool {
     /// Appends a given data array to the file attached to this buffer pool
     /// It returns the address where the data was appended
     pub(crate) fn append(&mut self, data: &mut Vec<u8>) -> io::Result<u64> {
-        for i in 0..self.buffers.len() {
-            if self.buffers[i].contains(self.file_size) {
-                let addr = self.buffers[i].append(data);
-                self.file_size = self.buffers[i].left_offset;
-                self.file.seek(SeekFrom::End(0))?;
-                self.file.write_all(data)?;
-                self.update_file_last_offset()?;
+        let mut file = acquire_lock!(self.file)?;
+        let mut buffers = acquire_lock!(self.buffers)?;
+        let mut file_size = acquire_lock!(self.file_size)?;
+
+        for buf in &mut *buffers {
+            if buf.contains(*file_size) {
+                let addr = buf.append(data);
+                *file_size = buf.left_offset;
+                file.seek(SeekFrom::End(0))?;
+                file.write_all(data)?;
                 return Ok(addr);
             }
         }
 
-        let start = self.file.seek(SeekFrom::End(0))?;
+        let start = file.seek(SeekFrom::End(0))?;
         let new_file_size = start + data.len() as u64;
-        self.file.write_all(data)?;
-        self.file_size = new_file_size;
-        self.update_file_last_offset()?;
-
+        file.write_all(data)?;
+        *file_size = new_file_size;
         Ok(start)
-    }
-
-    /// Updates the last_offset value in the Header of the database file
-    /// from the self.file_size value on self
-    fn update_file_last_offset(&mut self) -> io::Result<()> {
-        self.file.seek(SeekFrom::Start(30))?;
-        self.file.write_all(&self.file_size.to_be_bytes())?;
-        Ok(())
     }
 
     /// Inserts a given data array at the given address. Do note that this overwrites
@@ -119,17 +115,20 @@ impl BufferPool {
     /// could have a different length from the previous one, append it to the bottom
     /// then overwrite the previous offset in the index with the offset of the new entry
     pub(crate) fn replace(&mut self, address: u64, data: &[u8]) -> io::Result<()> {
-        for i in 0..self.buffers.len() {
-            if self.buffers[i].contains(address) {
-                self.buffers[i].replace(address, data.to_vec());
-                self.file.seek(SeekFrom::Start(address))?;
-                self.file.write_all(data)?;
+        let mut file = acquire_lock!(self.file)?;
+        let mut buffers = acquire_lock!(self.buffers)?;
+
+        for buf in &mut *buffers {
+            if buf.contains(address) {
+                buf.replace(address, data.to_vec());
+                file.seek(SeekFrom::Start(address))?;
+                file.write_all(data)?;
                 return Ok(());
             }
         }
 
-        self.file.seek(SeekFrom::Start(address))?;
-        self.file.write_all(data)?;
+        file.seek(SeekFrom::Start(address))?;
+        file.write_all(data)?;
 
         Ok(())
     }
@@ -137,8 +136,11 @@ impl BufferPool {
     /// Clears all data on disk and memory making it like a new store
     pub(crate) fn clear_file(&mut self) -> io::Result<()> {
         let header = DbFileHeader::new(self.max_keys, self.redundant_blocks);
-        self.file_size = reinitialize_db_file(&mut self.file, &header)?;
-        self.buffers.clear();
+        let mut file = acquire_lock!(self.file)?;
+        let mut buffers = acquire_lock!(self.buffers)?;
+        let mut file_size = acquire_lock!(self.file_size)?;
+        *file_size = reinitialize_db_file(file.deref_mut(), &header)?;
+        buffers.clear();
         Ok(())
     }
 
@@ -156,15 +158,20 @@ impl BufferPool {
             .create(true)
             .open(&new_file_path)?;
 
-        let header: DbFileHeader = DbFileHeader::from_file(&mut self.file)?;
-        let index_bytes_array = get_index_as_byte_array(&mut self.file, &header)?;
+        let mut file = acquire_lock!(self.file)?;
+        let mut buffers = acquire_lock!(self.buffers)?;
+        let mut file_size = acquire_lock!(self.file_size)?;
+
+        let mut file_ref = file.deref_mut();
+        let header: DbFileHeader = DbFileHeader::from_file(file_ref)?;
+        let index_bytes_array = get_index_as_byte_array(file_ref, &header)?;
         let reversed_index_map: HashMap<u64, u64> = get_index_as_reversed_map(&index_bytes_array)?;
         initialize_db_file(&mut new_file, &header, Some(index_bytes_array))?;
 
         let mut curr_offset = header.key_values_start_point;
         let mut new_file_curr_offset = curr_offset;
-        while curr_offset <= self.file_size {
-            let kv_byte_array = read_kv_bytes_from_file(&mut self.file, curr_offset)?;
+        while curr_offset <= *file_size {
+            let kv_byte_array = read_kv_bytes_from_file(file_ref, curr_offset)?;
             let kv_size = kv_byte_array.len() as u64;
             if reversed_index_map.contains_key(&curr_offset) {
                 // insert key value
@@ -180,9 +187,9 @@ impl BufferPool {
             curr_offset += kv_size;
         }
 
-        self.buffers.clear();
-        self.file = new_file;
-        self.file_size = new_file_curr_offset;
+        buffers.clear();
+        *file = new_file;
+        *file_size = new_file_curr_offset;
 
         fs::remove_file(&self.file_path)?;
         fs::rename(&new_file_path, &self.file_path)?;
@@ -194,19 +201,22 @@ impl BufferPool {
     /// Otherwise, it returns None
     /// This is to handle hash collisions.
     pub(crate) fn get_value(&mut self, address: u64, key: &[u8]) -> io::Result<Option<Value>> {
-        for buf in &self.buffers {
+        let mut buffers = acquire_lock!(self.buffers)?;
+
+        for buf in &mut *buffers {
             if buf.contains(address) {
                 return buf.get_value(address, key);
             }
         }
 
-        if self.buffers.len() >= self.capacity {
-            self.buffers.pop_front();
+        if buffers.len() >= self.capacity {
+            buffers.pop_front();
         }
 
         let mut buf: Vec<u8> = Vec::with_capacity(self.buffer_size);
-        self.file.seek(SeekFrom::Start(address))?;
-        self.file.read(&mut buf)?;
+        let mut file = acquire_lock!(self.file)?;
+        file.seek(SeekFrom::Start(address))?;
+        file.read(&mut buf)?;
 
         let entry: KeyValueEntry = KeyValueEntry::from_data_array(&buf, 0)?;
 
@@ -217,57 +227,61 @@ impl BufferPool {
         };
 
         // update buffers
-        self.buffers.push_back(Buffer::new(address, buf));
+        buffers.push_back(Buffer::new(address, buf));
 
         Ok(value)
     }
 
     /// Checks to see if the given address is for the given key
     pub(crate) fn addr_belongs_to_key(&mut self, address: u64, key: &[u8]) -> io::Result<bool> {
-        for buf in &self.buffers {
+        let mut buffers = acquire_lock!(self.buffers)?;
+        for buf in &*buffers {
             if buf.contains(address) {
                 return buf.addr_belongs_to_key(address, key);
             }
         }
 
-        if self.buffers.len() >= self.capacity {
-            self.buffers.pop_front();
+        if buffers.len() >= self.capacity {
+            buffers.pop_front();
         }
 
         let mut buf: Vec<u8> = Vec::with_capacity(self.buffer_size);
-        self.file.seek(SeekFrom::Start(address))?;
-        self.file.read(&mut buf)?;
+        let mut file = acquire_lock!(self.file)?;
+        file.seek(SeekFrom::Start(address))?;
+        file.read(&mut buf)?;
 
         let entry: KeyValueEntry = KeyValueEntry::from_data_array(&buf, 0)?;
 
         let value = entry.key == key;
 
         // update buffers
-        self.buffers.push_back(Buffer::new(address, buf));
+        buffers.push_back(Buffer::new(address, buf));
 
         Ok(value)
     }
 
     /// Reads an arbitrary array at the given address and of given size and returns it
     pub(crate) fn read_at(&mut self, address: u64, size: usize) -> io::Result<Vec<u8>> {
-        for i in 0..self.buffers.len() {
-            if self.buffers[i].contains(address) {
-                return self.buffers[i].read_at(address, size);
+        let mut buffers = acquire_lock!(self.buffers)?;
+        for buf in &mut *buffers {
+            if buf.contains(address) {
+                return buf.read_at(address, size);
             }
         }
 
-        if self.buffers.len() >= self.capacity {
-            self.buffers.pop_front();
+        if buffers.len() >= self.capacity {
+            buffers.pop_front();
         }
 
         let mut buf: Vec<u8> = Vec::with_capacity(self.buffer_size);
-        self.file.seek(SeekFrom::Start(address))?;
-        self.file.read(&mut buf)?;
+        let mut file = acquire_lock!(self.file)?;
+        file.seek(SeekFrom::Start(address))?;
+        file.read(&mut buf)?;
 
         let data_array = buf[0..size].to_vec();
 
         // update buffers
-        self.buffers.push_back(Buffer::new(address, buf));
+        buffers.push_back(Buffer::new(address, buf));
 
         Ok(data_array)
     }
