@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io;
 use std::io::{Read, Seek, SeekFrom};
 
+use crate::internal::utils::get_current_timestamp;
 use crate::internal::{get_hash, utils};
 
 const KEY_VALUE_MIN_SIZE_IN_BYTES: u32 = 4 + 4 + 8;
@@ -207,6 +208,16 @@ impl<'a> KeyValueEntry<'a> {
             .chain(self.value)
             .map(|v| v.to_owned())
             .collect()
+    }
+
+    /// Returns true if key has lived for longer than its time-to-live
+    /// It will always return false if time-to-live was never set
+    pub(crate) fn is_expired(&self) -> bool {
+        if self.expiry == 0 {
+            false
+        } else {
+            self.expiry < get_current_timestamp()
+        }
     }
 }
 

@@ -93,17 +93,16 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
 #### 4. Get
 
 1. The key supplied is run through a hashfunction with modulo `number_of_items_per_index_block`
-   and answer multiplied by 4 to get the byte offset. Let the hashed value be `hash`.
+   and answer multiplied by 8 to get the byte offset. Let the hashed value be `hash`.
 2. Set `index_block_offset` to zero to start from the first block.
 3. The `index_address` is set to `index_block_offset + 100 + hash`.
-4. The 4-byte offset at the `index_address` offset is read. This is the first possible pointer to the key-value entry.
+4. The 8-byte offset at the `index_address` offset is read. This is the first possible pointer to the key-value entry.
    Let's call it `key_value_offset`.
 5. If this `key_value_offset` is non-zero, it is possible that the value for that key exists.
-    - retrieve the key at the given `key_value_offset`. (Do note that there is a 4-byte number `key_size` before the
-      key. That number gives the size of the key).
-    - if this key is the same as the key passed:
-        - if the `deleted` is 1 or `expiry` is greater than the `current_timestamp`, return `None`
-        - else return `value` for this key-value entry
+    - retrieve the key at the given `key_value_offset`.
+        - if this key is the same as the key passed:
+            - if the `expiry` is greater than the `current_timestamp`, return `None`
+            - else return `value` for this value
     - else increment the `index_block_offset` by `net_block_size`
         - if the new `index_block_offset` is equal to or greater than the `key_values_start_point`, stop and
           return `None`.

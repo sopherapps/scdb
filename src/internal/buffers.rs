@@ -12,6 +12,11 @@ use crate::internal::{DbFileHeader, KeyValueEntry};
 
 const DEFAULT_POOL_CAPACITY: usize = 5;
 
+pub(crate) struct Value {
+    pub(crate) data: Vec<u8>,
+    pub(crate) is_expired: bool,
+}
+
 pub(crate) struct BufferPool {
     capacity: usize,
     buffer_size: usize,
@@ -173,10 +178,10 @@ impl BufferPool {
         Ok(())
     }
 
-    /// Returns the Some(Value) at the given address if the key there corresponds to the given key
+    /// Returns the Some((Value, bool>) at the given address if the key there corresponds to the given key
     /// Otherwise, it returns None
     /// This is to handle hash collisions.
-    pub(crate) fn get_value(&mut self, address: u64, key: &[u8]) -> io::Result<Option<Vec<u8>>> {
+    pub(crate) fn get_value(&mut self, address: u64, key: &[u8]) -> io::Result<Option<Value>> {
         for buf in &self.buffers {
             if buf.contains(address) {
                 return buf.get_value(address, key);
@@ -194,7 +199,7 @@ impl BufferPool {
         let entry: KeyValueEntry = KeyValueEntry::from_data_array(&buf, 0)?;
 
         let value = if entry.key == key {
-            Some(entry.value.to_vec())
+            Some(Value::from(&entry))
         } else {
             None
         };
@@ -297,11 +302,11 @@ impl Buffer {
     /// Otherwise, it returns None
     /// This is to handle hash collisions.
     #[inline]
-    fn get_value(&self, address: u64, key: &[u8]) -> io::Result<Option<Vec<u8>>> {
+    fn get_value(&self, address: u64, key: &[u8]) -> io::Result<Option<Value>> {
         let offset = (address - self.left_offset) as usize;
         let entry = KeyValueEntry::from_data_array(&self.data, offset)?;
         let value = if entry.key == key {
-            Some(entry.value.to_vec())
+            Some(Value::from(&entry))
         } else {
             None
         };
@@ -323,6 +328,15 @@ impl Buffer {
         let offset = (address - self.left_offset) as usize;
         let entry = KeyValueEntry::from_data_array(&self.data, offset)?;
         Ok(entry.key == key)
+    }
+}
+
+impl From<&KeyValueEntry<'_>> for Value {
+    fn from(entry: &KeyValueEntry) -> Self {
+        Self {
+            data: entry.value.to_vec(),
+            is_expired: entry.is_expired(),
+        }
     }
 }
 

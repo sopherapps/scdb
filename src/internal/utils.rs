@@ -1,5 +1,6 @@
 #[cfg(windows)]
 use std::mem;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
 use libc;
@@ -23,4 +24,13 @@ pub(crate) fn get_vm_page_size() -> u32 {
 
         info.dwPageSize as u32
     }
+}
+
+/// Returns the current timestamp in seconds from unix epoch
+pub(crate) fn get_current_timestamp() -> u64 {
+    let start = SystemTime::now();
+    let since_the_epoch = start
+        .duration_since(UNIX_EPOCH)
+        .expect("System time is poorly configured");
+    since_the_epoch.as_secs()
 }

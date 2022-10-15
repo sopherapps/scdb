@@ -46,13 +46,13 @@ impl Store {
     pub fn set(&mut self, k: &[u8], v: &[u8], ttl: Option<u64>) -> io::Result<()> {
         let expiry = match ttl {
             None => 0u64,
-            Some(expiry) => expiry,
+            Some(expiry) => internal::get_current_timestamp() + expiry,
         };
 
         let mut index_block = 0;
         let index_offset = self.header.get_index_offset(k);
 
-        while index_block <= self.header.number_of_index_blocks {
+        while index_block < self.header.number_of_index_blocks {
             let index_offset = self
                 .header
                 .get_index_offset_in_nth_block(index_offset, index_block)?;
@@ -80,8 +80,39 @@ impl Store {
         ))
     }
 
-    pub fn get(&self, k: &Vec<u8>) -> io::Result<Option<Vec<u8>>> {
-        todo!()
+    /// Returns the value corresponding to the given key
+    pub fn get(&mut self, k: &[u8]) -> io::Result<Option<Vec<u8>>> {
+        let mut index_block = 0;
+        let index_offset = self.header.get_index_offset(k);
+
+        while index_block < self.header.number_of_index_blocks {
+            let index_offset = self
+                .header
+                .get_index_offset_in_nth_block(index_offset, index_block)?;
+            let kv_offset_in_bytes = self
+                .buffer_pool
+                .read_at(index_offset, INDEX_ENTRY_SIZE_IN_BYTES as usize)?;
+            let entry_offset = u64::from_be_bytes(internal::extract_array(&kv_offset_in_bytes)?);
+
+            if entry_offset != 0 {
+                if let Some(v) = self.buffer_pool.get_value(entry_offset, k)? {
+                    let value = match v.is_expired {
+                        true => {
+                            // erase the index
+                            self.buffer_pool
+                                .replace(index_offset, &0u64.to_be_bytes())?;
+                            None
+                        }
+                        false => Some(v.data),
+                    };
+                    return Ok(value);
+                }
+            }
+
+            index_block += 1;
+        }
+
+        Ok(None)
     }
 
     pub fn delete(&mut self, k: &Vec<u8>) -> io::Result<()> {
@@ -111,7 +142,7 @@ mod tests {
         let values = get_values();
 
         insert_test_data(&mut store, &keys, &values);
-        let received_values = get_values_for_keys(&store, &keys);
+        let received_values = get_values_for_keys(&mut store, &keys);
 
         let expected_values: Vec<io::Result<Option<Vec<u8>>>> =
             values.iter().map(|v| Ok(Some(v.clone()))).collect();
@@ -135,7 +166,7 @@ mod tests {
         insert_test_data(&mut store, &keys, &values);
         delete_keys(&mut store, &keys_to_delete);
 
-        let received_values = get_values_for_keys(&store, &keys);
+        let received_values = get_values_for_keys(&mut store, &keys);
         let mut expected_values: Vec<io::Result<Option<Vec<u8>>>> =
             values[..2].iter().map(|v| Ok(Some(v.clone()))).collect();
         for _ in 0..keys_to_delete.len() {
@@ -159,7 +190,7 @@ mod tests {
         insert_test_data(&mut store, &keys, &values);
         store.clear().expect("store cleared");
 
-        let received_values = get_values_for_keys(&store, &keys);
+        let received_values = get_values_for_keys(&mut store, &keys);
         let expected_values: Vec<io::Result<Option<Vec<u8>>>> =
             keys.iter().map(|_| Ok(None)).collect();
 
@@ -185,7 +216,7 @@ mod tests {
         // Open new store instance
         let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
 
-        let received_values = get_values_for_keys(&store, &keys);
+        let received_values = get_values_for_keys(&mut store, &keys);
         let expected_values: Vec<io::Result<Option<Vec<u8>>>> =
             values.iter().map(|v| Ok(Some(v.clone()))).collect();
 
@@ -215,7 +246,7 @@ mod tests {
         // Open new store instance
         let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
 
-        let received_values = get_values_for_keys(&store, &keys);
+        let received_values = get_values_for_keys(&mut store, &keys);
         let mut expected_values: Vec<io::Result<Option<Vec<u8>>>> =
             values[..2].iter().map(|v| Ok(Some(v.clone()))).collect();
         for _ in 0..keys_to_delete.len() {
@@ -246,7 +277,7 @@ mod tests {
         // Open new store instance
         let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
 
-        let received_values = get_values_for_keys(&store, &keys);
+        let received_values = get_values_for_keys(&mut store, &keys);
         let expected_values: Vec<io::Result<Option<Vec<u8>>>> =
             keys.iter().map(|_| Ok(None)).collect();
 
@@ -277,7 +308,10 @@ mod tests {
 
     /// Gets a vector of responses from the store when store.get is called
     /// for each key passed in keys
-    fn get_values_for_keys(store: &Store, keys: &Vec<Vec<u8>>) -> Vec<io::Result<Option<Vec<u8>>>> {
+    fn get_values_for_keys(
+        store: &mut Store,
+        keys: &Vec<Vec<u8>>,
+    ) -> Vec<io::Result<Option<Vec<u8>>>> {
         let mut received_values = Vec::with_capacity(keys.len());
 
         for k in keys {
