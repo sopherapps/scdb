@@ -5,9 +5,12 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 use scdb::Store;
 
+const STORE_PATH: &str = "testdb";
+
 // Setting
 fn setting_benchmark(c: &mut Criterion) {
-    let mut store = Store::new("testdb", None, None, None).expect("create store");
+    let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+    store.clear().expect("clear store");
     let records = get_records();
     for (k, v) in &records {
         c.bench_function(
@@ -27,12 +30,12 @@ fn setting_benchmark(c: &mut Criterion) {
             },
         );
     }
-    store.close();
 }
 
 // Updating
 fn updating_benchmark(c: &mut Criterion) {
-    let mut store = Store::new("testdb", None, None, None).expect("create store");
+    let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+    store.clear().expect("clear store");
     let records = get_records();
     let updates = get_updates();
     for (k, v) in &records {
@@ -48,12 +51,12 @@ fn updating_benchmark(c: &mut Criterion) {
             |b| b.iter(|| store.set(black_box(k), black_box(v), black_box(None))),
         );
     }
-    store.close();
 }
 
 // Getting
 fn getting_benchmark(c: &mut Criterion) {
-    let mut store = Store::new("testdb", None, None, None).expect("create store");
+    let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+    store.clear().expect("clear store");
     let records = get_records();
     for (k, v) in &records {
         store.set(k, v, None).expect(&format!("set {:?}", k));
@@ -64,12 +67,12 @@ fn getting_benchmark(c: &mut Criterion) {
             |b| b.iter(|| store.get(black_box(k))),
         );
     }
-    store.close();
 }
 
 // Deleting
 fn deleting_benchmark(c: &mut Criterion) {
-    let mut store = Store::new("testdb", None, None, None).expect("create store");
+    let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+    store.clear().expect("clear store");
     let records = get_records();
     for (k, v) in &records {
         store.set(k, v, None).expect(&format!("set {:?}", k));
@@ -81,19 +84,18 @@ fn deleting_benchmark(c: &mut Criterion) {
             |b| b.iter(|| store.delete(black_box(k))),
         );
     }
-    store.close();
 }
 
 // Clearing
 fn clearing_benchmark(c: &mut Criterion) {
-    let mut store = Store::new("testdb", None, None, None).expect("create store");
+    let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+    store.clear().expect("clear store");
     let records = get_records();
     for (k, v) in &records {
         store.set(k, v, None).expect(&format!("set {:?}", k));
     }
 
     c.bench_function("clear", |b| b.iter(|| store.clear()));
-    store.close();
 }
 
 fn get_records() -> Vec<(Vec<u8>, Vec<u8>)> {

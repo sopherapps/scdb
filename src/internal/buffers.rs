@@ -162,7 +162,7 @@ impl BufferPool {
         let mut buffers = acquire_lock!(self.buffers)?;
         let mut file_size = acquire_lock!(self.file_size)?;
 
-        let mut file_ref = file.deref_mut();
+        let file_ref = file.deref_mut();
         let header: DbFileHeader = DbFileHeader::from_file(file_ref)?;
         let index_bytes_array = get_index_as_byte_array(file_ref, &header)?;
         let reversed_index_map: HashMap<u64, u64> = get_index_as_reversed_map(&index_bytes_array)?;
