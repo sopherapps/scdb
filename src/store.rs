@@ -37,11 +37,6 @@ impl Store {
         Ok(store)
     }
 
-    pub fn close(&mut self) {
-        // Flush the memory mapped file to disk
-        // todo!()
-    }
-
     /// Sets the given key value in the store
     pub fn set(&mut self, k: &[u8], v: &[u8], ttl: Option<u64>) -> io::Result<()> {
         let expiry = match ttl {
@@ -67,7 +62,6 @@ impl Store {
                 let prev_last_offset = self.buffer_pool.append(&mut kv_bytes)?;
                 self.buffer_pool
                     .replace(index_offset, &prev_last_offset.to_be_bytes())?;
-                self.header.last_offset = self.buffer_pool.file_size;
                 return Ok(());
             }
 
@@ -143,8 +137,9 @@ impl Store {
         Ok(())
     }
 
+    /// Clears the data in the file and the cache
     pub fn clear(&mut self) -> io::Result<()> {
-        todo!()
+        self.buffer_pool.clear_file()
     }
 }
 
@@ -162,6 +157,7 @@ mod tests {
     #[serial]
     fn set_and_read_multiple_key_value_pairs() {
         let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
+        store.clear().expect("store failed to clear");
         let keys = get_keys();
         let values = get_values();
 
@@ -174,14 +170,13 @@ mod tests {
         for (got, expected) in received_values.into_iter().zip(expected_values) {
             assert_eq!(got.unwrap(), expected.unwrap());
         }
-
-        store.close();
     }
 
     #[test]
     #[serial]
     fn set_and_delete_multiple_key_value_pairs() {
         let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
+        store.clear().expect("store failed to clear");
         let keys = get_keys();
         let values = get_values();
 
@@ -200,14 +195,13 @@ mod tests {
         for (got, expected) in received_values.into_iter().zip(expected_values) {
             assert_eq!(got.unwrap(), expected.unwrap());
         }
-
-        store.close();
     }
 
     #[test]
     #[serial]
     fn set_and_clear() {
         let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
+        store.clear().expect("store failed to clear");
         let keys = get_keys();
         let values = get_values();
 
@@ -221,21 +215,19 @@ mod tests {
         for (got, expected) in received_values.into_iter().zip(expected_values) {
             assert_eq!(got.unwrap(), expected.unwrap());
         }
-
-        store.close();
     }
 
     #[test]
     #[serial]
     fn persist_to_file() {
         let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
+        store
+            .clear()
+            .expect("store failed to get cleared for some reason");
         let keys = get_keys();
         let values = get_values();
 
         insert_test_data(&mut store, &keys, &values);
-        // Close the store
-
-        store.close();
 
         // Open new store instance
         let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
@@ -247,14 +239,13 @@ mod tests {
         for (got, expected) in received_values.into_iter().zip(expected_values) {
             assert_eq!(got.unwrap(), expected.unwrap());
         }
-
-        store.close();
     }
 
     #[test]
     #[serial]
     fn persist_to_file_after_delete() {
         let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
+        store.clear().expect("store failed to clear");
         let keys = get_keys();
         let values = get_values();
 
@@ -262,10 +253,6 @@ mod tests {
 
         insert_test_data(&mut store, &keys, &values);
         delete_keys(&mut store, &keys_to_delete);
-
-        // Close the store
-
-        store.close();
 
         // Open new store instance
         let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
@@ -280,23 +267,18 @@ mod tests {
         for (got, expected) in received_values.into_iter().zip(expected_values) {
             assert_eq!(got.unwrap(), expected.unwrap());
         }
-
-        store.close();
     }
 
     #[test]
     #[serial]
     fn persist_to_file_after_clear() {
         let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
+        store.clear().expect("store failed to clear");
         let keys = get_keys();
         let values = get_values();
 
         insert_test_data(&mut store, &keys, &values);
-        store.clear();
-
-        // Close the store
-
-        store.close();
+        store.clear().expect("store failed to clear");
 
         // Open new store instance
         let mut store = Store::new(STORE_PATH, None, None, None).expect("create store");
@@ -308,8 +290,6 @@ mod tests {
         for (got, expected) in received_values.into_iter().zip(expected_values) {
             assert_eq!(got.unwrap(), expected.unwrap());
         }
-
-        store.close();
     }
 
     #[test]

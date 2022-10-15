@@ -5,7 +5,7 @@ file acting as the underlying array.
 
 ### Operations
 
-There are five main operations
+There are six main operations
 
 #### 1. Initialization
 
@@ -13,11 +13,11 @@ There are five main operations
     - adds the 100-byte header basing on user configuration and default values
     - adds the placeholders for the index blocks, each item pre-initialized with a zero.
 - It then memory maps the entire database file
-- And loads the derived and non-derived properties like 'max_keys', 'block_size', 'redundant_blocks', 'last_offset',
+- And loads the derived and non-derived properties like 'max_keys', 'block_size', 'redundant_blocks',
   'number_of_index_blocks' (`round_up(max_keys / number_of_items_per_index_block) + redundant_blocks`),
-  'number_of_items_per_index_block' (`round_up(block_size / 4)`),
-  'key_values_start_point' (`100 + (number_of_items_per_index_block * 4 * number_of_index_blocks)`),
-  'net_block_size' (`number_of_items_per_index_block * 4`)
+  'number_of_items_per_index_block' (`round_up(block_size / 8)`),
+  'key_values_start_point' (`100 + (number_of_items_per_index_block * 8 * number_of_index_blocks)`),
+  'net_block_size' (`number_of_items_per_index_block * 8`)
 
 #### 2. Set
 
@@ -54,7 +54,7 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
 ##### Performance
 
 - Time complexity: This operation is O(k) where k is the `number_of_index_blocks`.
-- Space complexity: This operation is O(kn+m) where n = key length, m = value length and k = `number_of_index_blocks`.
+- Auxiliary Space: This operation is O(kn+m) where n = key length, m = value length and k = `number_of_index_blocks`.
   The key-value entry is copied into a contiguous byte array before insertion
   and if the hash for the given key already has keys associated with it, each will be allocated in memory thus `kn`.
 
@@ -86,7 +86,7 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
 ##### Performance
 
 - Time complexity: This operation is O(k) where k is the `number_of_index_blocks`.
-- Space complexity: This operation is O(kn) where n = buffer size (default is virtual memory page size), and k
+- Auxiliary space: This operation is O(kn) where n = buffer size (default is virtual memory page size), and k
   = `number_of_index_blocks`. The hash for the key is checked for each index block, until a block is found that contains
   the key.
   If the hash for the given key is not already buffered, we read a new block from file into memory.
@@ -114,7 +114,7 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
 ##### Performance
 
 - Time complexity: This operation is O(k) where k is the `number_of_index_blocks`.
-- Space complexity: This operation is O(kn) where n = buffer size (default is virtual memory page size), and k
+- Auxiliary space: This operation is O(kn) where n = buffer size (default is virtual memory page size), and k
   = `number_of_index_blocks`. The hash for the key is checked for each index block, until a block is found that contains
   the key.
   If the hash for the given key is not already buffered, we read a new block from file into memory.
@@ -143,7 +143,27 @@ No read, nor write would be allowed. It can also be requested for by the user.
 
 ##### Performance
 
-- This operation is O(kN) where k is the `number_of_index_blocks` and N is the number of keys in the file before
+- Time complexity: This operation is O(N) where N is the number of keys in the
+  file before
   compaction.
-- The worst case in terms of memory allocations is when only the first key-value entry was deleted or is expired,
-  all other key-value entries would have to be copied and pasted.
+- Auxiliary space: This operation is O(2m) where m is the `file_size` of the original file because we copy one file to
+  another.
+  The worst case is when there is no key that has been deleted or expired.
+
+#### 6. Clear
+
+Clear the entire database.
+
+1. Create new file
+2. Copy header into the new file and reset file_size
+3. Add an empty index to the file
+4. Clear the buffers
+5. Delete the old file
+6. Rename the new file to the old file's name
+
+##### Performance
+
+- Time complexity: This operation is O(1) where k is the `number_of_index_blocks` and N is the number of keys in the
+  file before
+  compaction.
+- Auxiliary space: This operation is O(km) where k is the `number_of_index_blocks` and m is the `block_size`.

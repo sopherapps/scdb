@@ -20,6 +20,8 @@ pub(crate) struct Value {
 pub(crate) struct BufferPool {
     capacity: usize,
     buffer_size: usize,
+    max_keys: Option<u64>,
+    redundant_blocks: Option<u16>,
     // These are used only for reads
     buffers: VecDeque<Buffer>,
     pub(crate) file: File,
@@ -70,6 +72,8 @@ impl BufferPool {
         let v = Self {
             capacity,
             buffer_size,
+            max_keys,
+            redundant_blocks,
             buffers: VecDeque::with_capacity(capacity),
             file,
             file_size,
@@ -130,6 +134,14 @@ impl BufferPool {
         Ok(())
     }
 
+    /// Clears all data on disk and memory making it like a new store
+    pub(crate) fn clear_file(&mut self) -> io::Result<()> {
+        let header = DbFileHeader::new(self.max_keys, self.redundant_blocks);
+        self.file_size = reinitialize_db_file(&mut self.file, &header)?;
+        self.buffers.clear();
+        Ok(())
+    }
+
     /// This removes any deleted or expired entries from the file. It must first lock the buffer and the file.
     /// In order to be more efficient, it creates a new file, copying only that data which is not deleted or expired
     pub(crate) fn compact_file(&mut self) -> io::Result<()> {
@@ -178,7 +190,7 @@ impl BufferPool {
         Ok(())
     }
 
-    /// Returns the Some((Value, bool>) at the given address if the key there corresponds to the given key
+    /// Returns the Some(Value) at the given address if the key there corresponds to the given key
     /// Otherwise, it returns None
     /// This is to handle hash collisions.
     pub(crate) fn get_value(&mut self, address: u64, key: &[u8]) -> io::Result<Option<Value>> {
@@ -360,4 +372,21 @@ fn initialize_db_file(
     file.seek(SeekFrom::Start(0))?;
 
     Ok(())
+}
+
+/// Re-initializes the database file, giving it the header and the index place holders
+/// and truncating it. It returns the new file size
+fn reinitialize_db_file(file: &mut File, header: &DbFileHeader) -> io::Result<u64> {
+    let header_bytes = header.as_bytes();
+    debug_assert_eq!(header_bytes.len(), 100);
+
+    let index_block_bytes = header.create_empty_index_blocks_bytes();
+
+    file.seek(SeekFrom::Start(0))?;
+    file.write_all(&header_bytes)?;
+    file.write_all(&index_block_bytes)?;
+    let size = header_bytes.len() as u64 + index_block_bytes.len() as u64;
+    file.set_len(size)?;
+
+    Ok(size)
 }

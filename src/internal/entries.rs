@@ -15,7 +15,6 @@ pub(crate) struct DbFileHeader {
     pub(crate) block_size: u32,
     pub(crate) max_keys: u64,
     pub(crate) redundant_blocks: u16,
-    pub(crate) last_offset: u64,
     pub(crate) items_per_index_block: u64,
     pub(crate) number_of_index_blocks: u64,
     pub(crate) key_values_start_point: u64,
@@ -47,7 +46,6 @@ impl DbFileHeader {
             block_size,
             max_keys,
             redundant_blocks,
-            last_offset: 0,
             items_per_index_block: 0,
             number_of_index_blocks: 0,
             key_values_start_point: 0,
@@ -66,11 +64,10 @@ impl DbFileHeader {
         self.number_of_index_blocks = (self.max_keys as f64 / self.items_per_index_block as f64)
             as u64
             + self.redundant_blocks as u64;
-        self.last_offset = HEADER_SIZE_IN_BYTES
+        self.key_values_start_point = HEADER_SIZE_IN_BYTES
             + (self.items_per_index_block
                 * INDEX_ENTRY_SIZE_IN_BYTES
                 * self.number_of_index_blocks);
-        self.key_values_start_point = self.last_offset;
         self.net_block_size = self.items_per_index_block * INDEX_ENTRY_SIZE_IN_BYTES;
     }
 
@@ -82,7 +79,6 @@ impl DbFileHeader {
             .chain(&self.block_size.to_be_bytes())
             .chain(&self.max_keys.to_be_bytes())
             .chain(&self.redundant_blocks.to_be_bytes())
-            .chain(&self.last_offset.to_be_bytes())
             .map(|v| v.to_owned())
             .collect()
     }
@@ -109,7 +105,6 @@ impl DbFileHeader {
             block_size,
             max_keys,
             redundant_blocks,
-            last_offset,
             items_per_index_block: 0,
             number_of_index_blocks: 0,
             key_values_start_point: 0,
