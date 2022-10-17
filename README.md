@@ -61,6 +61,7 @@ Here are those that have been developed:
 - [ ] Add tests for internal::buffers::Value
 - [ ] Add tests for internal::buffers::BufferPool
 - [ ] Add tests for store::Store
+- [ ] Add GitHub actions for CI/CD
 - [ ] Add package documentation
 - [ ] Add benchmarks
 - [ ] compare benchmarks with those of redis, sqlite, lmdb etc.
