@@ -1,3 +1,4 @@
+use std::io;
 #[cfg(windows)]
 use std::mem;
 use std::path::Path;
@@ -37,8 +38,8 @@ pub(crate) fn get_current_timestamp() -> u64 {
 }
 
 /// Creates the database folder if it does not exist
-pub(crate) fn initialize_db_folder(store_path: &Path) {
-    let _ = std::fs::create_dir_all(store_path);
+pub(crate) fn initialize_db_folder(store_path: &Path) -> io::Result<()> {
+    std::fs::create_dir_all(store_path)
 }
 
 #[cfg(test)]
@@ -69,7 +70,7 @@ mod tests {
         std::fs::remove_dir_all(store_path).unwrap_or(());
         assert!(!Path::exists(store_path));
 
-        initialize_db_folder(store_path);
+        initialize_db_folder(store_path).expect("initializes db folder");
 
         assert!(Path::exists(store_path));
         std::fs::remove_dir_all(store_path).expect("removes the test_db_utils folder");

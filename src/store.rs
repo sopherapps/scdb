@@ -31,7 +31,7 @@ impl Store {
         let db_folder = Path::new(store_path);
         let db_file_path = db_folder.join(DEFAULT_DB_FILE);
 
-        initialize_db_folder(db_folder);
+        initialize_db_folder(db_folder)?;
 
         let buffer_pool = BufferPool::new(
             pool_capacity,
