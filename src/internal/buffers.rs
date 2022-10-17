@@ -1,3 +1,6 @@
+use crate::internal::entries::{DbFileHeader, KeyValueEntry};
+use crate::internal::macros::acquire_lock;
+use crate::internal::utils::{get_vm_page_size, slice_to_array};
 use std::collections::{HashMap, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -5,13 +8,6 @@ use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::{fs, io};
-
-use crate::internal::entries::{
-    get_index_as_byte_array, get_index_as_reversed_map, read_kv_bytes_from_file,
-};
-use crate::internal::macros::acquire_lock;
-use crate::internal::utils::get_vm_page_size;
-use crate::internal::{DbFileHeader, KeyValueEntry};
 
 const DEFAULT_POOL_CAPACITY: usize = 5;
 
@@ -403,4 +399,45 @@ fn reinitialize_db_file(file: &mut File, header: &DbFileHeader) -> io::Result<u6
     file.set_len(size)?;
 
     Ok(size)
+}
+
+/// Extracts the key value entry's bytes array from the file given the address where to find it
+fn read_kv_bytes_from_file(file: &mut File, address: u64) -> io::Result<Vec<u8>> {
+    file.seek(SeekFrom::Start(address))?;
+    let mut size_bytes: [u8; 4] = [0; 4];
+    file.read(&mut size_bytes)?;
+    let size = u32::from_be_bytes(size_bytes);
+    let mut data = Vec::with_capacity(size as usize);
+    file.seek(SeekFrom::Start(address))?;
+    file.read(&mut data)?;
+    Ok(data)
+}
+
+/// Extracts the index as a byte array
+fn get_index_as_byte_array(file: &mut File, header: &DbFileHeader) -> io::Result<Vec<u8>> {
+    let size = header.net_block_size * header.number_of_index_blocks;
+    let mut data = Vec::with_capacity(size as usize);
+    file.seek(SeekFrom::Start(100))?;
+    file.read(&mut data)?;
+    Ok(data)
+}
+
+/// Extracts an index map that has keys as the entry offset and
+/// values as the index offset for only non-zero entry offsets
+fn get_index_as_reversed_map(index_bytes: &Vec<u8>) -> io::Result<HashMap<u64, u64>> {
+    let bytes_length = index_bytes.len();
+    let map_size = bytes_length / 8;
+    let mut map: HashMap<u64, u64> = HashMap::with_capacity(map_size);
+    let mut i = 0;
+    while i < bytes_length {
+        let entry_offset = u64::from_be_bytes(slice_to_array(&index_bytes[i..i + 8])?);
+        if entry_offset > 0 {
+            // only non-zero entries are picked because zero signifies deleted or not yet inserted
+            map.insert(entry_offset, 100 + i as u64);
+        }
+
+        i += 8;
+    }
+
+    Ok(map)
 }

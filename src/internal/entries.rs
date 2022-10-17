@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fs::File;
 use std::io;
 use std::io::{Read, Seek, SeekFrom};
@@ -10,6 +9,7 @@ const KEY_VALUE_MIN_SIZE_IN_BYTES: u32 = 4 + 4 + 8;
 pub(crate) const INDEX_ENTRY_SIZE_IN_BYTES: u64 = 8;
 const HEADER_SIZE_IN_BYTES: u64 = 100;
 
+#[derive(Debug, PartialEq)]
 pub(crate) struct DbFileHeader {
     pub(crate) title: String,
     pub(crate) block_size: u32,
@@ -21,6 +21,7 @@ pub(crate) struct DbFileHeader {
     pub(crate) net_block_size: u64,
 }
 
+#[derive(Debug, PartialEq)]
 pub(crate) struct KeyValueEntry<'a> {
     pub(crate) size: u32,
     pub(crate) key_size: u32,
@@ -154,6 +155,9 @@ impl DbFileHeader {
 
 impl<'a> KeyValueEntry<'a> {
     /// Creates a new KeyValueEntry
+    /// `key` is the byte array of the key
+    /// `value` is the byte array of the value
+    /// `expiry` is the timestamp (in seconds from unix epoch)
     pub(crate) fn new(key: &'a [u8], value: &'a [u8], expiry: u64) -> Self {
         let key_size = key.len() as u32;
         let size = key_size + KEY_VALUE_MIN_SIZE_IN_BYTES + value.len() as u32;
@@ -169,17 +173,15 @@ impl<'a> KeyValueEntry<'a> {
 
     /// Extracts the key value entry from the data array
     pub(crate) fn from_data_array(data: &'a [u8], offset: usize) -> io::Result<Self> {
-        let mut cursor = offset;
-        let size = u32::from_be_bytes(utils::slice_to_array(&data[cursor..4])?);
-        cursor += 4;
-        let key_size = u32::from_be_bytes(utils::slice_to_array(&data[cursor..4])?);
-        cursor += 4;
-        let key = &data[cursor..key_size as usize];
-        cursor += key_size as usize;
-        let expiry = u64::from_be_bytes(utils::slice_to_array(&data[cursor..8])?);
-        cursor += 8;
+        let size = u32::from_be_bytes(utils::slice_to_array(&data[offset..offset + 4])?);
+        let key_size = u32::from_be_bytes(utils::slice_to_array(&data[offset + 4..offset + 8])?);
+        let k_size = key_size as usize;
+        let key = &data[offset + 8..offset + 8 + k_size];
+        let expiry = u64::from_be_bytes(utils::slice_to_array(
+            &data[offset + 8 + k_size..offset + k_size + 16],
+        )?);
         let value_size = (size - key_size - KEY_VALUE_MIN_SIZE_IN_BYTES) as usize;
-        let value = &data[cursor..value_size];
+        let value = &data[offset + k_size + 16..offset + k_size + 16 + value_size];
 
         let entry = Self {
             size,
@@ -215,46 +217,58 @@ impl<'a> KeyValueEntry<'a> {
     }
 }
 
-/// Extracts the key value entry's bytes array from the file given the address where to find it
-pub(crate) fn read_kv_bytes_from_file(file: &mut File, address: u64) -> io::Result<Vec<u8>> {
-    file.seek(SeekFrom::Start(address))?;
-    let mut size_bytes: [u8; 4] = [0; 4];
-    file.read(&mut size_bytes)?;
-    let size = u32::from_be_bytes(size_bytes);
-    let mut data = Vec::with_capacity(size as usize);
-    file.seek(SeekFrom::Start(address))?;
-    file.read(&mut data)?;
-    Ok(data)
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// Extracts the index as a byte array
-pub(crate) fn get_index_as_byte_array(
-    file: &mut File,
-    header: &DbFileHeader,
-) -> io::Result<Vec<u8>> {
-    let size = header.net_block_size * header.number_of_index_blocks;
-    let mut data = Vec::with_capacity(size as usize);
-    file.seek(SeekFrom::Start(100))?;
-    file.read(&mut data)?;
-    Ok(data)
-}
+    const KV_DATA_ARRAY: [u8; 22] = [
+        /* size: 22u32*/ 0u8, 0, 0, 22, /* key size: 3u32*/ 0, 0, 0, 3,
+        /* key */ 102, 111, 111, /* expiry 0u64 */ 0, 0, 0, 0, 0, 0, 0, 0,
+        /* value */ 98, 97, 114,
+    ];
 
-/// Extracts an index map that has keys as the entry offset and
-/// values as the index offset for only non-zero entry offsets
-pub(crate) fn get_index_as_reversed_map(index_bytes: &Vec<u8>) -> io::Result<HashMap<u64, u64>> {
-    let bytes_length = index_bytes.len();
-    let map_size = bytes_length / 8;
-    let mut map: HashMap<u64, u64> = HashMap::with_capacity(map_size);
-    let mut i = 0;
-    while i < bytes_length {
-        let entry_offset = u64::from_be_bytes(utils::slice_to_array(&index_bytes[i..i + 8])?);
-        if entry_offset > 0 {
-            // only non-zero entries are picked because zero signifies deleted or not yet inserted
-            map.insert(entry_offset, 100 + i as u64);
-        }
-
-        i += 8;
+    #[test]
+    fn key_value_entry_from_data_array() {
+        let kv = KeyValueEntry::new(&b"foo"[..], &b"bar"[..], 0);
+        let got = KeyValueEntry::from_data_array(&KV_DATA_ARRAY[..], 0)
+            .expect("key value from data array");
+        assert_eq!(&got, &kv, "got = {:?}, expected = {:?}", &got, &kv);
     }
 
-    Ok(map)
+    #[test]
+    fn key_value_entry_from_data_array_with_offset() {
+        let kv = KeyValueEntry::new(&b"foo"[..], &b"bar"[..], 0);
+        let data_array: Vec<u8> = [89u8, 78u8]
+            .iter()
+            .chain(&KV_DATA_ARRAY)
+            .map(|v| v.to_owned())
+            .collect();
+        let got =
+            KeyValueEntry::from_data_array(&data_array[..], 2).expect("key value from data array");
+        assert_eq!(&got, &kv, "got = {:?}, expected = {:?}", &got, &kv);
+    }
+
+    #[test]
+    fn key_value_as_bytes() {
+        let kv = KeyValueEntry::new(&b"foo"[..], &b"bar"[..], 0);
+        let kv_vec = KV_DATA_ARRAY.to_vec();
+        let got = kv.as_bytes();
+        assert_eq!(&got, &kv_vec, "got = {:?}, expected = {:?}", &got, &kv_vec);
+    }
+
+    #[test]
+    fn is_expired_works() {
+        let never_expires = KeyValueEntry::new(&b"never_expires"[..], &b"bar"[..], 0);
+        // 1666023836u64 is some past timestamp in October 2022
+        let expired = KeyValueEntry::new(&b"expires"[..], &b"bar"[..], 1666023836u64);
+        let not_expired = KeyValueEntry::new(
+            &b"not_expired"[..],
+            &b"bar"[..],
+            get_current_timestamp() * 2,
+        );
+
+        assert!(!never_expires.is_expired());
+        assert!(!not_expired.is_expired());
+        assert!(expired.is_expired());
+    }
 }
