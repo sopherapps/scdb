@@ -79,15 +79,15 @@ Here are those that have been developed:
 
 - Run the test command
 
-```shell
-cargo test
-```
+  ```shell
+  cargo test
+  ```
 
 - Run the bench test command
 
-```shell
-cargo bench
-```
+  ```shell
+  cargo bench
+  ```
 
 ## Acknowledgement
 
