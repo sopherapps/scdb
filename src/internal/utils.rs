@@ -43,10 +43,8 @@ pub(crate) fn initialize_db_folder(store_path: &Path) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::path::Path;
-
-    use crate::internal::utils::get_vm_page_size;
-    use crate::internal::{get_current_timestamp, initialize_db_folder};
 
     #[test]
     fn get_vm_page_size_returns_page_size() {
