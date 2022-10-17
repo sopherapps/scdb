@@ -98,7 +98,6 @@ impl DbFileHeader {
         let block_size = u32::from_be_bytes(extract_array::<4>(&data[16..20])?);
         let max_keys = u64::from_be_bytes(extract_array::<8>(&data[20..28])?);
         let redundant_blocks = u16::from_be_bytes(extract_array::<2>(&data[28..30])?);
-        let last_offset = u64::from_be_bytes(extract_array::<8>(&data[30..38])?);
 
         let mut header = Self {
             title,
