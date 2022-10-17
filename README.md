@@ -2,7 +2,8 @@
 
 A very simple and fast key-value store but persisting data to disk, with a "localStorage-like" API.
 
-**scdb is not yet production ready. It is still being heavily developed and its API (and features) could change quite
+**scdb is not yet production ready. It is not even working yet!!. It is still being heavily developed and its API (and
+features) could change quite
 drastically**
 
 ## Purpose
@@ -52,10 +53,18 @@ Here are those that have been developed:
 ### TODO:
 
 - [x] Add designs
+- [x] Implement basic skeleton
+- [x] Add tests for internal::utils
+- [x] Add tests for internal::entries::KeyValueEntry
+- [ ] Add tests for internal::entries::DbFileHeader
+- [ ] Add tests for internal::buffers::Buffer
+- [ ] Add tests for internal::buffers::Value
+- [ ] Add tests for internal::buffers::BufferPool
+- [ ] Add tests for store::Store
 - [ ] Add package documentation
-- [ ] Make the key hashing point to offsets on the memory-mapped database file
 - [ ] Add benchmarks
 - [ ] compare benchmarks with those of redis, sqlite, lmdb etc.
+- [ ] Release version 0.0.1
 
 ### How to Test
 
