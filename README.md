@@ -91,7 +91,9 @@ Here are those that have been developed:
 
 ## Acknowledgement
 
-- Inspiration was got from [lmdb](https://www.symas.com/lmdb/technical), especially with regards to memory-mapped files.
+- Inspiration was got from [lmdb](https://www.symas.com/lmdb/technical), especially in regard to memory-mapped
+  files. That is until I ran into issues with memory-mapped files...For more details, look
+  at [this paper by Andrew Crotty, Viktor Leis and Andy Pavlo](https://db.cs.cmu.edu/mmap-cidr2022/).
 - A few ideas were picked from [redis](https://redis.io/) and [sqlite](https://www.sqlite.org/index.html) especially to
   do with the database file format.
 
