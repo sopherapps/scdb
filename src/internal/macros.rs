@@ -1,6 +1,3 @@
-#[rustfmt::skip::macros(acquire_lock)]
-pub(crate) use acquire_lock;
-
 /// Acquires the lock on a Mutex and returns an io Error if it fails
 macro_rules! acquire_lock {
     ($v:expr) => {
@@ -12,3 +9,5 @@ macro_rules! acquire_lock {
         })
     };
 }
+
+pub(crate) use acquire_lock;
