@@ -7,7 +7,7 @@ use std::time::Duration;
 use clokwerk::{ScheduleHandle, Scheduler, TimeUnits};
 
 use crate::internal::{
-    acquire_lock, extract_array, get_current_timestamp, initialize_db_folder, BufferPool,
+    acquire_lock, get_current_timestamp, initialize_db_folder, slice_to_array, BufferPool,
     DbFileHeader, KeyValueEntry, INDEX_ENTRY_SIZE_IN_BYTES,
 };
 
@@ -71,7 +71,7 @@ impl Store {
                 .get_index_offset_in_nth_block(index_offset, index_block)?;
             let kv_offset_in_bytes =
                 buffer_pool.read_at(index_offset, INDEX_ENTRY_SIZE_IN_BYTES as usize)?;
-            let entry_offset = u64::from_be_bytes(extract_array(&kv_offset_in_bytes)?);
+            let entry_offset = u64::from_be_bytes(slice_to_array(&kv_offset_in_bytes)?);
 
             if entry_offset == 0 || buffer_pool.addr_belongs_to_key(entry_offset, k)? {
                 let kv = KeyValueEntry::new(k, v, expiry);
@@ -102,7 +102,7 @@ impl Store {
                 .get_index_offset_in_nth_block(index_offset, index_block)?;
             let kv_offset_in_bytes =
                 buffer_pool.read_at(index_offset, INDEX_ENTRY_SIZE_IN_BYTES as usize)?;
-            let entry_offset = u64::from_be_bytes(extract_array(&kv_offset_in_bytes)?);
+            let entry_offset = u64::from_be_bytes(slice_to_array(&kv_offset_in_bytes)?);
 
             if entry_offset != 0 {
                 if let Some(v) = buffer_pool.get_value(entry_offset, k)? {
@@ -136,7 +136,7 @@ impl Store {
                 .get_index_offset_in_nth_block(index_offset, index_block)?;
             let kv_offset_in_bytes =
                 buffer_pool.read_at(index_offset, INDEX_ENTRY_SIZE_IN_BYTES as usize)?;
-            let entry_offset = u64::from_be_bytes(extract_array(&kv_offset_in_bytes)?);
+            let entry_offset = u64::from_be_bytes(slice_to_array(&kv_offset_in_bytes)?);
 
             if entry_offset != 0 && buffer_pool.addr_belongs_to_key(entry_offset, k)? {
                 // erase the index

@@ -95,9 +95,9 @@ impl DbFileHeader {
     pub(crate) fn from_data_array(data: &[u8]) -> io::Result<Self> {
         let title = String::from_utf8(data[0..16].to_owned())
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        let block_size = u32::from_be_bytes(extract_array::<4>(&data[16..20])?);
-        let max_keys = u64::from_be_bytes(extract_array::<8>(&data[20..28])?);
-        let redundant_blocks = u16::from_be_bytes(extract_array::<2>(&data[28..30])?);
+        let block_size = u32::from_be_bytes(utils::slice_to_array::<4>(&data[16..20])?);
+        let max_keys = u64::from_be_bytes(utils::slice_to_array::<8>(&data[20..28])?);
+        let redundant_blocks = u16::from_be_bytes(utils::slice_to_array::<2>(&data[28..30])?);
 
         let mut header = Self {
             title,
@@ -170,13 +170,13 @@ impl<'a> KeyValueEntry<'a> {
     /// Extracts the key value entry from the data array
     pub(crate) fn from_data_array(data: &'a [u8], offset: usize) -> io::Result<Self> {
         let mut cursor = offset;
-        let size = u32::from_be_bytes(extract_array(&data[cursor..4])?);
+        let size = u32::from_be_bytes(utils::slice_to_array(&data[cursor..4])?);
         cursor += 4;
-        let key_size = u32::from_be_bytes(extract_array(&data[cursor..4])?);
+        let key_size = u32::from_be_bytes(utils::slice_to_array(&data[cursor..4])?);
         cursor += 4;
         let key = &data[cursor..key_size as usize];
         cursor += key_size as usize;
-        let expiry = u64::from_be_bytes(extract_array(&data[cursor..8])?);
+        let expiry = u64::from_be_bytes(utils::slice_to_array(&data[cursor..8])?);
         cursor += 8;
         let value_size = (size - key_size - KEY_VALUE_MIN_SIZE_IN_BYTES) as usize;
         let value = &data[cursor..value_size];
@@ -215,12 +215,6 @@ impl<'a> KeyValueEntry<'a> {
     }
 }
 
-/// Extracts a byte array of size N from a byte array slice
-pub(crate) fn extract_array<const N: usize>(data: &[u8]) -> io::Result<[u8; N]> {
-    data.try_into()
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-}
-
 /// Extracts the key value entry's bytes array from the file given the address where to find it
 pub(crate) fn read_kv_bytes_from_file(file: &mut File, address: u64) -> io::Result<Vec<u8>> {
     file.seek(SeekFrom::Start(address))?;
@@ -253,7 +247,7 @@ pub(crate) fn get_index_as_reversed_map(index_bytes: &Vec<u8>) -> io::Result<Has
     let mut map: HashMap<u64, u64> = HashMap::with_capacity(map_size);
     let mut i = 0;
     while i < bytes_length {
-        let entry_offset = u64::from_be_bytes(extract_array(&index_bytes[i..i + 8])?);
+        let entry_offset = u64::from_be_bytes(utils::slice_to_array(&index_bytes[i..i + 8])?);
         if entry_offset > 0 {
             // only non-zero entries are picked because zero signifies deleted or not yet inserted
             map.insert(entry_offset, 100 + i as u64);
