@@ -12,6 +12,7 @@ use std::{fs, io};
 
 const DEFAULT_POOL_CAPACITY: usize = 5;
 
+#[derive(Debug, PartialEq)]
 pub(crate) struct Value {
     pub(crate) data: Vec<u8>,
     pub(crate) is_expired: bool,
@@ -29,6 +30,7 @@ pub(crate) struct BufferPool {
     pub(crate) file_size: Mutex<u64>,
 }
 
+#[derive(Debug, PartialEq)]
 pub(crate) struct Buffer {
     data: Vec<u8>,
     left_offset: u64,
@@ -441,4 +443,46 @@ fn get_index_as_reversed_map(index_bytes: &Vec<u8>) -> io::Result<HashMap<u64, u
     }
 
     Ok(map)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::internal::get_current_timestamp;
+
+    #[test]
+    fn value_from_key_value_entry() {
+        type Record<'a> = (KeyValueEntry<'a>, Value);
+        let test_table: Vec<Record> = vec![
+            (
+                KeyValueEntry::new(&b"never_expires"[..], &b"barer"[..], 0),
+                Value {
+                    data: vec![98, 97, 114, 101, 114],
+                    is_expired: false,
+                },
+            ),
+            (
+                KeyValueEntry::new(&b"expires"[..], &b"Hallelujah"[..], 1666023836u64),
+                Value {
+                    data: vec![72, 97, 108, 108, 101, 108, 117, 106, 97, 104],
+                    is_expired: true,
+                },
+            ),
+            (
+                KeyValueEntry::new(
+                    &b"not_expired"[..],
+                    &b"bar"[..],
+                    get_current_timestamp() * 2,
+                ),
+                Value {
+                    data: vec![98, 97, 114],
+                    is_expired: false,
+                },
+            ),
+        ];
+
+        for (kv, expected) in test_table {
+            assert_eq!(&Value::from(&kv), &expected);
+        }
+    }
 }

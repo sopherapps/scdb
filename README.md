@@ -58,7 +58,7 @@ Here are those that have been developed:
 - [x] Add tests for internal::entries::KeyValueEntry
 - [x] Add tests for internal::entries::DbFileHeader
 - [ ] Add tests for internal::buffers::Buffer
-- [ ] Add tests for internal::buffers::Value
+- [x] Add tests for internal::buffers::Value
 - [ ] Add tests for internal::buffers::BufferPool
 - [ ] Add tests for store::Store
 - [ ] Add GitHub actions for CI/CD
