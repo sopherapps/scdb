@@ -56,7 +56,7 @@ Here are those that have been developed:
 - [x] Implement basic skeleton
 - [x] Add tests for internal::utils
 - [x] Add tests for internal::entries::KeyValueEntry
-- [ ] Add tests for internal::entries::DbFileHeader
+- [x] Add tests for internal::entries::DbFileHeader
 - [ ] Add tests for internal::buffers::Buffer
 - [ ] Add tests for internal::buffers::Value
 - [ ] Add tests for internal::buffers::BufferPool

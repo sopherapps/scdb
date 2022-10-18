@@ -1,4 +1,5 @@
-use crate::internal::entries::{DbFileHeader, KeyValueEntry};
+use crate::internal::entries::db_file_header::DbFileHeader;
+use crate::internal::entries::key_value::KeyValueEntry;
 use crate::internal::macros::acquire_lock;
 use crate::internal::utils::{get_vm_page_size, slice_to_array};
 use std::collections::{HashMap, VecDeque};

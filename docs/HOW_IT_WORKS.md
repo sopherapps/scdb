@@ -14,9 +14,9 @@ There are six main operations
     - adds the placeholders for the index blocks, each item pre-initialized with a zero.
 - It then memory maps the entire database file
 - And loads the derived and non-derived properties like 'max_keys', 'block_size', 'redundant_blocks',
-  'number_of_index_blocks' (`round_up(max_keys / number_of_items_per_index_block) + redundant_blocks`),
-  'number_of_items_per_index_block' (`round_up(block_size / 8)`),
-  'key_values_start_point' (`100 + (number_of_items_per_index_block * 8 * number_of_index_blocks)`),
+  'number_of_index_blocks' (`(max_keys / number_of_items_per_index_block).ceil() + redundant_blocks`),
+  'number_of_items_per_index_block' (`(block_size / 8).floor()`),
+  'key_values_start_point' (`100 + (net_block_size * number_of_index_blocks)`),
   'net_block_size' (`number_of_items_per_index_block * 8`)
 
 #### 2. Set
