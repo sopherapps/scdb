@@ -740,8 +740,6 @@ mod tests {
 
         for extra_offset in extra_offsets {
             let response = pool.replace(initial_offset + extra_offset, &mut new_data);
-            // Not so sure though as this might write to file. Maybe it should throw an error as this is replacement
-            // not appending
             assert!(response.is_err());
         }
 
@@ -750,7 +748,28 @@ mod tests {
 
     #[test]
     fn clear_file_works() {
-        todo!()
+        let file_name = "testdb.scdb";
+        let initial_data = &[76u8, 67, 56];
+        let initial_data_length = initial_data.len() as u64;
+
+        let mut pool = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
+        let expected = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
+
+        let initial_offset = get_actual_file_size(file_name);
+        write_to_file(file_name, initial_offset, initial_data);
+        increment_pool_file_size(&mut pool, initial_data_length);
+        let (header_array, _) = read_from_file(file_name, 0, 100);
+        append_buffers(
+            &mut pool,
+            &[(initial_offset, &initial_data[..]), (0, &header_array[..])][..],
+        );
+
+        pool.clear_file().expect("file cleared");
+        assert_eq!(&pool, &expected);
+
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
     }
 
     #[test]
