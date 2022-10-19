@@ -81,6 +81,13 @@ impl DbFileHeader {
 
     /// Extracts the header from the data array
     pub(crate) fn from_data_array(data: &[u8]) -> io::Result<Self> {
+        if data.len() < HEADER_SIZE_IN_BYTES as usize {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("data should be at least 100 bytes in length"),
+            ));
+        }
+
         let title = String::from_utf8(data[0..16].to_owned())
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         let block_size = u32::from_be_bytes(utils::slice_to_array::<4>(&data[16..20])?);
@@ -106,7 +113,14 @@ impl DbFileHeader {
     pub(crate) fn from_file(file: &mut File) -> io::Result<Self> {
         file.seek(SeekFrom::Start(0))?;
         let mut buf = [0u8; HEADER_SIZE_IN_BYTES as usize];
-        file.read(&mut buf)?;
+        let data_len = file.read(&mut buf)?;
+        if data_len < HEADER_SIZE_IN_BYTES as usize {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("data should be at least 100 bytes in length"),
+            ));
+        }
+
         Self::from_data_array(&buf)
     }
 
@@ -346,6 +360,65 @@ mod tests {
 
     #[test]
     #[serial]
+    fn db_file_header_from_data_array_out_of_bounds() {
+        let block_size = get_vm_page_size();
+        let block_size_bytes = block_size.to_be_bytes().to_vec();
+        // title: Scdb versn 0.001
+        let title_bytes = vec![
+            83u8, 99, 100, 98, 32, 118, 101, 114, 115, 110, 32, 48, 46, 48, 48, 49,
+        ];
+        let reserve_bytes = vec![0u8; 70];
+        let test_table: Vec<Vec<u8>> = vec![
+            vec![
+                title_bytes[2..].to_vec(), // title is truncated
+                block_size_bytes.clone(),
+                vec![0, 0, 0, 0, 0, 15, 66, 64],
+                vec![0, 1],
+                reserve_bytes.clone(),
+            ]
+            .concat(),
+            vec![
+                title_bytes.clone(),
+                block_size_bytes[..3].to_vec(), // block_size is truncated
+                vec![0, 0, 0, 0, 1, 110, 54, 0],
+                vec![0, 1],
+                reserve_bytes.clone(),
+            ]
+            .concat(),
+            vec![
+                title_bytes.clone(),
+                block_size_bytes.clone(),
+                vec![0, 0, 15, 66, 64], // max_keys is truncated
+                vec![0, 9],
+                reserve_bytes.clone(),
+            ]
+            .concat(),
+            vec![
+                title_bytes.clone(),
+                block_size_bytes.clone(),
+                vec![0, 0, 0, 0, 1, 110, 54, 0],
+                vec![5], // redundant_blocks is truncated
+                reserve_bytes.clone(),
+            ]
+            .concat(),
+            vec![
+                title_bytes.clone(),
+                block_size_bytes.clone(),
+                vec![0, 0, 0, 0, 1, 110, 54, 0],
+                vec![0, 5],
+                reserve_bytes[..45].to_vec(), // reserve bytes are truncated
+            ]
+            .concat(),
+        ];
+
+        for data_array in test_table {
+            let got = DbFileHeader::from_data_array(&data_array);
+            assert!(got.is_err());
+        }
+    }
+
+    #[test]
+    #[serial]
     fn db_file_header_from_file() {
         let file_path = "testdb.scdb";
         let block_size = get_vm_page_size();
@@ -408,6 +481,70 @@ mod tests {
                 generate_file_with_data(file_path, &data_array).expect("generate file with data");
             let got = DbFileHeader::from_file(&mut file).expect("from_file");
             assert_eq!(&got, &expected);
+        }
+
+        std::fs::remove_file(&file_path).expect("delete the test db file");
+    }
+
+    #[test]
+    #[serial]
+    fn db_file_header_from_data_file_out_of_bounds() {
+        let file_path = "testdb.scdb";
+        let block_size = get_vm_page_size();
+        let block_size_bytes = block_size.to_be_bytes().to_vec();
+        // title: Scdb versn 0.001
+        let title_bytes = vec![
+            83u8, 99, 100, 98, 32, 118, 101, 114, 115, 110, 32, 48, 46, 48, 48, 49,
+        ];
+        let reserve_bytes = vec![0u8; 70];
+        let test_table: Vec<Vec<u8>> = vec![
+            vec![
+                title_bytes[2..].to_vec(), // title is truncated
+                block_size_bytes.clone(),
+                vec![0, 0, 0, 0, 0, 15, 66, 64],
+                vec![0, 1],
+                reserve_bytes.clone(),
+            ]
+            .concat(),
+            vec![
+                title_bytes.clone(),
+                block_size_bytes[..3].to_vec(), // block_size is truncated
+                vec![0, 0, 0, 0, 1, 110, 54, 0],
+                vec![0, 1],
+                reserve_bytes.clone(),
+            ]
+            .concat(),
+            vec![
+                title_bytes.clone(),
+                block_size_bytes.clone(),
+                vec![0, 0, 15, 66, 64], // max_keys is truncated
+                vec![0, 9],
+                reserve_bytes.clone(),
+            ]
+            .concat(),
+            vec![
+                title_bytes.clone(),
+                block_size_bytes.clone(),
+                vec![0, 0, 0, 0, 1, 110, 54, 0],
+                vec![5], // redundant_blocks is truncated
+                reserve_bytes.clone(),
+            ]
+            .concat(),
+            vec![
+                title_bytes.clone(),
+                block_size_bytes.clone(),
+                vec![0, 0, 0, 0, 1, 110, 54, 0],
+                vec![0, 5],
+                reserve_bytes[..45].to_vec(), // reserve bytes are truncated
+            ]
+            .concat(),
+        ];
+
+        for data_array in test_table {
+            let mut file =
+                generate_file_with_data(file_path, &data_array).expect("generate file with data");
+            let got = DbFileHeader::from_file(&mut file);
+            assert!(got.is_err());
         }
 
         std::fs::remove_file(&file_path).expect("delete the test db file");
