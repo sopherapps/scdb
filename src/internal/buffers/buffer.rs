@@ -53,6 +53,13 @@ impl Buffer {
 
     /// Appends the data to the end of the array
     /// It returns the address (or offset) where the data was appended
+    ///
+    /// It is possible for data appended to this buffer to make it exceed
+    /// its capacity. However, after that [`can_append`] will always return false
+    /// So make sure you call `can_append()` always.
+    /// This is a trade-off that allows us to limit the number of re-allocations for buffers
+    ///
+    /// [`can_append`]: Buffer::can_append
     #[inline]
     pub(crate) fn append(&mut self, data: Vec<u8>) -> u64 {
         let mut data = data;

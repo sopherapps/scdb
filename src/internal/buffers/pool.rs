@@ -11,6 +11,12 @@ use std::{fs, io};
 
 const DEFAULT_POOL_CAPACITY: usize = 5;
 
+/// A pool of Buffers.
+///
+/// It is possible to have more than one buffer with the same address in a kind of overlap
+/// In order to avoid corruption, we always update the last buffer that has a given address
+/// since buffers are in FIFO queue. When retrieving a value, we also use the last buffer
+/// that has a given address
 #[derive(Debug)]
 pub(crate) struct BufferPool {
     capacity: usize,
@@ -79,7 +85,9 @@ impl BufferPool {
         let mut buffers = acquire_lock!(self.buffers)?;
         let mut file_size = acquire_lock!(self.file_size)?;
 
-        for buf in &mut *buffers {
+        // loop in reverse, starting at the back
+        // since the latest buffers are the ones updated when new changes occur
+        for buf in buffers.iter_mut().rev() {
             if buf.can_append(*file_size) {
                 let addr = buf.append(data.clone());
                 *file_size = buf.right_offset;
@@ -104,7 +112,9 @@ impl BufferPool {
         let mut file = acquire_lock!(self.file)?;
         let mut buffers = acquire_lock!(self.buffers)?;
 
-        for buf in &mut *buffers {
+        // loop in reverse, starting at the back
+        // since the latest buffers are the ones updated when new changes occur
+        for buf in buffers.iter_mut().rev() {
             if buf.contains(address) {
                 buf.replace(address, data.to_vec())?;
                 file.seek(SeekFrom::Start(address))?;
@@ -189,7 +199,9 @@ impl BufferPool {
     pub(crate) fn get_value(&mut self, address: u64, key: &[u8]) -> io::Result<Option<Value>> {
         let mut buffers = acquire_lock!(self.buffers)?;
 
-        for buf in &mut *buffers {
+        // loop in reverse, starting at the back
+        // since the latest buffers are the ones updated when new changes occur
+        for buf in buffers.iter_mut().rev() {
             if buf.contains(address) {
                 return buf.get_value(address, key);
             }
@@ -221,7 +233,9 @@ impl BufferPool {
     /// Checks to see if the given address is for the given key
     pub(crate) fn addr_belongs_to_key(&mut self, address: u64, key: &[u8]) -> io::Result<bool> {
         let mut buffers = acquire_lock!(self.buffers)?;
-        for buf in &*buffers {
+        // loop in reverse, starting at the back
+        // since the latest buffers are the ones updated when new changes occur
+        for buf in buffers.iter_mut().rev() {
             if buf.contains(address) {
                 return buf.addr_belongs_to_key(address, key);
             }
@@ -248,7 +262,9 @@ impl BufferPool {
     /// Reads an arbitrary array at the given address and of given size and returns it
     pub(crate) fn read_at(&mut self, address: u64, size: usize) -> io::Result<Vec<u8>> {
         let mut buffers = acquire_lock!(self.buffers)?;
-        for buf in &mut *buffers {
+        // loop in reverse, starting at the back
+        // since the latest buffers are the ones updated when new changes occur
+        for buf in buffers.iter_mut().rev() {
             if buf.contains(address) {
                 return buf.read_at(address, size);
             }
