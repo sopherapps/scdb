@@ -1,5 +1,7 @@
 use crate::internal;
 use crate::internal::get_current_timestamp;
+use crate::internal::macros::safe_slice;
+use std::fmt::Debug;
 use std::io;
 
 const KEY_VALUE_MIN_SIZE_IN_BYTES: u32 = 4 + 4 + 8;
@@ -33,15 +35,26 @@ impl<'a> KeyValueEntry<'a> {
 
     /// Extracts the key value entry from the data array
     pub(crate) fn from_data_array(data: &'a [u8], offset: usize) -> io::Result<Self> {
-        let size = u32::from_be_bytes(internal::slice_to_array(&data[offset..offset + 4])?);
-        let key_size = u32::from_be_bytes(internal::slice_to_array(&data[offset + 4..offset + 8])?);
+        let data_len = data.len();
+        let size_slice = safe_slice!(&data, offset, offset + 4, data_len)?;
+        let size = u32::from_be_bytes(internal::slice_to_array(size_slice)?);
+
+        let key_size_slice = safe_slice!(&data, offset + 4, offset + 8, data_len)?;
+        let key_size = u32::from_be_bytes(internal::slice_to_array(key_size_slice)?);
+
         let k_size = key_size as usize;
-        let key = &data[offset + 8..offset + 8 + k_size];
-        let expiry = u64::from_be_bytes(internal::slice_to_array(
-            &data[offset + 8 + k_size..offset + k_size + 16],
-        )?);
+        let key = safe_slice!(&data, offset + 8, offset + 8 + k_size, data_len)?;
+
+        let expiry_slice = safe_slice!(&data, offset + 8 + k_size, offset + k_size + 16, data_len)?;
+        let expiry = u64::from_be_bytes(internal::slice_to_array(&expiry_slice)?);
+
         let value_size = (size - key_size - KEY_VALUE_MIN_SIZE_IN_BYTES) as usize;
-        let value = &data[offset + k_size + 16..offset + k_size + 16 + value_size];
+        let value = safe_slice!(
+            &data,
+            offset + k_size + 16,
+            offset + k_size + 16 + value_size,
+            data_len
+        )?;
 
         let entry = Self {
             size,
@@ -106,6 +119,17 @@ mod tests {
         let got =
             KeyValueEntry::from_data_array(&data_array[..], 2).expect("key value from data array");
         assert_eq!(&got, &kv, "got = {:?}, expected = {:?}", &got, &kv);
+    }
+
+    #[test]
+    fn key_value_entry_from_data_array_with_out_of_bounds_offset() {
+        let data_array: Vec<u8> = [89u8, 78u8]
+            .iter()
+            .chain(&KV_DATA_ARRAY)
+            .map(|v| v.to_owned())
+            .collect();
+        let got = KeyValueEntry::from_data_array(&data_array[..], 4);
+        assert!(got.is_err());
     }
 
     #[test]
