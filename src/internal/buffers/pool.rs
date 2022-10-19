@@ -52,7 +52,7 @@ impl BufferPool {
 
         let should_create_new = !file_path.exists();
         let mut file = OpenOptions::new()
-            .append(true)
+            .write(true)
             .read(true)
             .create(should_create_new)
             .open(file_path)?;
@@ -109,6 +109,9 @@ impl BufferPool {
     /// could have a different length from the previous one, append it to the bottom
     /// then overwrite the previous offset in the index with the offset of the new entry
     pub(crate) fn replace(&mut self, address: u64, data: &[u8]) -> io::Result<()> {
+        let file_size = acquire_lock!(self.file_size)?;
+        self.validate_bounds(address, address + data.len() as u64, *file_size)?;
+
         let mut file = acquire_lock!(self.file)?;
         let mut buffers = acquire_lock!(self.buffers)?;
 
@@ -149,7 +152,7 @@ impl BufferPool {
         };
         let new_file_path = folder.join("tmp__compact.scdb");
         let mut new_file = OpenOptions::new()
-            .append(true)
+            .write(true)
             .read(true)
             .create(true)
             .open(&new_file_path)?;
@@ -285,6 +288,22 @@ impl BufferPool {
         let data_array = buf[0..size].to_vec();
         Ok(data_array)
     }
+
+    /// Checks if the given range is within bounds for this buffer
+    /// This is just a helper
+    fn validate_bounds(&self, lower: u64, upper: u64, file_size: u64) -> io::Result<()> {
+        if lower >= file_size || upper > file_size {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Span {}-{} is out of bounds for file size {}",
+                    lower, upper, file_size
+                ),
+            ))
+        } else {
+            Ok(())
+        }
+    }
 }
 
 impl PartialEq for BufferPool {
@@ -418,7 +437,7 @@ mod tests {
                     buffers: Mutex::new(VecDeque::with_capacity(DEFAULT_POOL_CAPACITY)),
                     file: Mutex::new(
                         OpenOptions::new()
-                            .append(true)
+                            .write(true)
                             .read(true)
                             .create(true)
                             .open(file_name)
@@ -438,7 +457,7 @@ mod tests {
                     buffers: Mutex::new(VecDeque::with_capacity(60)),
                     file: Mutex::new(
                         OpenOptions::new()
-                            .append(true)
+                            .write(true)
                             .read(true)
                             .create(true)
                             .open(file_name)
@@ -458,7 +477,7 @@ mod tests {
                     buffers: Mutex::new(VecDeque::with_capacity(DEFAULT_POOL_CAPACITY)),
                     file: Mutex::new(
                         OpenOptions::new()
-                            .append(true)
+                            .write(true)
                             .read(true)
                             .create(true)
                             .open(file_name)
@@ -480,7 +499,7 @@ mod tests {
                     buffers: Mutex::new(VecDeque::with_capacity(DEFAULT_POOL_CAPACITY)),
                     file: Mutex::new(
                         OpenOptions::new()
-                            .append(true)
+                            .write(true)
                             .read(true)
                             .create(true)
                             .open(file_name)
@@ -500,7 +519,7 @@ mod tests {
                     buffers: Mutex::new(VecDeque::with_capacity(DEFAULT_POOL_CAPACITY)),
                     file: Mutex::new(
                         OpenOptions::new()
-                            .append(true)
+                            .write(true)
                             .read(true)
                             .create(true)
                             .open(file_name)
@@ -579,7 +598,7 @@ mod tests {
         assert_eq!(bytes_read, data_length);
         assert_eq!(data_in_file, data);
 
-        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name))
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
     }
 
     #[test]
@@ -624,17 +643,109 @@ mod tests {
         assert_eq!(first_buf.right_offset, final_file_size);
         assert_eq!(first_buf.data, [initial_data.to_vec(), data].concat());
 
-        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name))
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
     }
 
     #[test]
-    fn replace_works() {
-        todo!()
+    fn replace_in_file() {
+        let file_name = "testdb.scdb";
+        let data = &[72u8, 97, 108, 108, 101, 108, 117, 106, 97, 104];
+        let data_length = data.len();
+        let new_data = &[70u8, 94, 118, 10, 201, 108, 117, 146, 37, 154];
+        let mut pool = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
+        let offset = get_pool_file_size(&mut pool);
+        write_to_file(file_name, offset, data);
+        increment_pool_file_size(&mut pool, data_length as u64);
+
+        pool.replace(offset, &mut new_data.to_vec())
+            .expect("replace data");
+
+        let final_file_size = get_pool_file_size(&mut pool);
+        let (data_in_file, bytes_read) = read_from_file(file_name, offset, data_length);
+        let actual_file_size = get_actual_file_size(file_name);
+
+        assert_eq!(final_file_size, offset + data_length as u64);
+        assert_eq!(final_file_size, actual_file_size);
+        assert_eq!(bytes_read, data_length);
+        assert_eq!(data_in_file, new_data);
+
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
+    }
+
+    #[test]
+    fn replace_in_pre_existing_buffer() {
+        let file_name = "testdb.scdb";
+        let initial_data = &[76u8, 67, 56];
+        let initial_data_length = initial_data.len() as u64;
+        let mut new_data = vec![72u8, 97, 108];
+        let new_data_length = new_data.len();
+
+        let mut pool = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
+
+        let initial_offset = get_actual_file_size(file_name);
+        write_to_file(file_name, initial_offset, initial_data);
+        increment_pool_file_size(&mut pool, initial_data_length);
+        let (header_array, _) = read_from_file(file_name, 0, 100);
+        let initial_file_size = get_pool_file_size(&mut pool);
+        append_buffers(
+            &mut pool,
+            &[(initial_offset, &initial_data[..]), (0, &header_array[..])][..],
+        );
+
+        pool.replace(initial_offset, &mut new_data)
+            .expect("replaces data in buffer");
+
+        let (data_in_file, bytes_read) = read_from_file(file_name, initial_offset, new_data_length);
+        let actual_file_size = get_actual_file_size(file_name);
+        let final_file_size = get_pool_file_size(&mut pool);
+
+        let mut buffers = acquire_lock!(pool.buffers).expect("acquire lock on buffers");
+        let first_buf = buffers.pop_front().expect("buffer popped front");
+
+        // assert things in file
+        assert_eq!(final_file_size, initial_file_size);
+        assert_eq!(final_file_size, actual_file_size);
+        assert_eq!(bytes_read, new_data_length);
+        assert_eq!(data_in_file, new_data);
+
+        // assert things in buffer
+        assert_eq!(first_buf.right_offset, final_file_size);
+        assert_eq!(first_buf.data, new_data);
+
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
     }
 
     #[test]
     fn replace_out_of_bounds() {
-        todo!()
+        let file_name = "testdb.scdb";
+        let initial_data = &[76u8, 67, 56];
+        let initial_data_length = initial_data.len() as u64;
+        let mut new_data = vec![72u8, 97, 108];
+
+        let mut pool = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
+
+        let initial_offset = get_actual_file_size(file_name);
+        write_to_file(file_name, initial_offset, initial_data);
+        increment_pool_file_size(&mut pool, initial_data_length);
+        let (header_array, _) = read_from_file(file_name, 0, 100);
+        append_buffers(
+            &mut pool,
+            &[(initial_offset, &initial_data[..]), (0, &header_array[..])][..],
+        );
+
+        let extra_offsets = &[3, 50, 78];
+
+        for extra_offset in extra_offsets {
+            let response = pool.replace(initial_offset + extra_offset, &mut new_data);
+            // Not so sure though as this might write to file. Maybe it should throw an error as this is replacement
+            // not appending
+            assert!(response.is_err());
+        }
+
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
     }
 
     #[test]
@@ -718,7 +829,7 @@ mod tests {
     /// Writes the given data to the file at the given address
     fn write_to_file(file_path: &str, addr: u64, data: &[u8]) {
         let mut file = OpenOptions::new()
-            .append(true)
+            .write(true)
             .open(file_path)
             .expect(&format!("open the file: {}", file_path));
 
