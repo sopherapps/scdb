@@ -1,4 +1,5 @@
 use crate::internal::KeyValueEntry;
+use std::cmp::min;
 use std::io;
 
 #[derive(Debug, PartialEq)]
@@ -14,22 +15,36 @@ pub(crate) struct Value {
 /// that would be got from the file to the immediate right of this buffer's data array
 #[derive(Debug, PartialEq)]
 pub(crate) struct Buffer {
-    data: Vec<u8>,
+    capacity: usize,
+    pub(crate) data: Vec<u8>,
     pub(crate) left_offset: u64,
-    right_offset: u64,
+    pub(crate) right_offset: u64,
 }
 
 impl Buffer {
     /// Creates a new Buffer with the given left_offset
     #[inline]
-    pub(crate) fn new(left_offset: u64, data: Vec<u8>) -> Self {
-        let right_offset = left_offset + data.len() as u64;
+    pub(crate) fn new(left_offset: u64, data: &[u8], capacity: usize) -> Self {
+        let upper_bound = min(data.len(), capacity);
+        let right_offset = left_offset + upper_bound as u64;
+        let data = data[..upper_bound].to_vec();
         Self {
+            capacity,
             data,
             left_offset,
             right_offset,
         }
     }
+
+    /// Checks if the given address can be appended to this buffer
+    /// The buffer should be contiguous thus this is true if `address` is
+    /// equal to the exclusive `right_offset` and the capacity has not been reached yet.
+    #[inline]
+    pub(crate) fn can_append(&self, address: u64) -> bool {
+        (self.right_offset - self.left_offset) < self.capacity as u64
+            && address == self.right_offset
+    }
+
     /// Checks if the given address is in this buffer
     #[inline]
     pub(crate) fn contains(&self, address: u64) -> bool {
@@ -39,9 +54,10 @@ impl Buffer {
     /// Appends the data to the end of the array
     /// It returns the address (or offset) where the data was appended
     #[inline]
-    pub(crate) fn append(&mut self, data: &mut Vec<u8>) -> u64 {
+    pub(crate) fn append(&mut self, data: Vec<u8>) -> u64 {
+        let mut data = data;
         let data_length = data.len();
-        self.data.append(data);
+        self.data.append(&mut data);
         let prev_right_offset = self.right_offset;
         self.right_offset += data_length as u64;
         return prev_right_offset;
@@ -138,6 +154,7 @@ mod tests {
         /* key */ 102, 111, 111, /* expiry 0u64 */ 0, 0, 0, 0, 0, 0, 0, 0,
         /* value */ 98, 97, 114,
     ];
+    const CAPACITY: usize = 4098;
 
     #[test]
     fn value_from_key_value_entry() {
@@ -177,7 +194,11 @@ mod tests {
 
     #[test]
     fn buffer_contains() {
-        let buf = Buffer::new(79, vec![72, 97, 108, 108, 101, 108, 117, 106, 97, 104]);
+        let buf = Buffer::new(
+            79,
+            &[72, 97, 108, 108, 101, 108, 117, 106, 97, 104],
+            CAPACITY,
+        );
         let test_table = vec![
             (8u64, false),
             (80u64, true),
@@ -191,12 +212,39 @@ mod tests {
     }
 
     #[test]
+    fn buffer_can_append() {
+        let data = &[72, 97, 108, 108, 101, 108, 117, 106, 97, 104];
+        let offset = 79u64;
+        let test_table = vec![
+            (CAPACITY, 8u64, false),
+            (CAPACITY, 89, true),
+            (10, 89, false),
+            (11, 89, true),
+            (CAPACITY, 90, false),
+            (CAPACITY, 900, false),
+            (CAPACITY, 17, false),
+            (10, 83, false),
+        ];
+
+        for (cap, addr, expected) in test_table {
+            let buf = Buffer::new(offset, data, cap);
+
+            assert_eq!(expected, buf.can_append(addr));
+        }
+    }
+
+    #[test]
     fn buffer_appends() {
-        let mut buf = Buffer::new(79, vec![72, 97, 108, 108, 101, 108, 117, 106, 97, 104]);
-        buf.append(&mut vec![98u8, 97, 114, 101, 114]);
+        let mut buf = Buffer::new(
+            79,
+            &[72, 97, 108, 108, 101, 108, 117, 106, 97, 104],
+            CAPACITY,
+        );
+        buf.append(vec![98u8, 97, 114, 101, 114]);
         assert_eq!(
             buf,
             Buffer {
+                capacity: CAPACITY,
                 data: vec![72u8, 97, 108, 108, 101, 108, 117, 106, 97, 104, 98, 97, 114, 101, 114],
                 left_offset: 79,
                 right_offset: 94,
@@ -206,12 +254,17 @@ mod tests {
 
     #[test]
     fn buffer_replace() {
-        let mut buf = Buffer::new(79, vec![72, 97, 108, 108, 101, 108, 117, 106, 97, 104]);
+        let mut buf = Buffer::new(
+            79,
+            &[72, 97, 108, 108, 101, 108, 117, 106, 97, 104],
+            CAPACITY,
+        );
         buf.replace(82, vec![98u8, 97, 114, 101, 114])
             .expect("replace");
         assert_eq!(
             buf,
             Buffer {
+                capacity: CAPACITY,
                 data: vec![72u8, 97, 108, 98, 97, 114, 101, 114, 97, 104],
                 left_offset: 79,
                 right_offset: 89,
@@ -221,7 +274,11 @@ mod tests {
 
     #[test]
     fn buffer_replace_out_of_bounds() {
-        let mut buf = Buffer::new(79, vec![72, 97, 108, 108, 101, 108, 117, 106, 97, 104]);
+        let mut buf = Buffer::new(
+            79,
+            &[72, 97, 108, 108, 101, 108, 117, 106, 97, 104],
+            CAPACITY,
+        );
         let test_table = vec![
             (85, vec![98u8, 97, 114, 101, 114]),
             (86, vec![98u8, 97, 114, 101]),
@@ -238,7 +295,7 @@ mod tests {
 
     #[test]
     fn buffer_get_value() {
-        let buf = Buffer::new(79, KV_DATA_ARRAY.to_vec());
+        let buf = Buffer::new(79, &KV_DATA_ARRAY[..], CAPACITY);
         let kv = KeyValueEntry::new(&b"foo"[..], &b"bar"[..], 0);
 
         let test_table = vec![
@@ -256,7 +313,7 @@ mod tests {
 
     #[test]
     fn buffer_get_value_out_of_bounds() {
-        let buf = Buffer::new(79, KV_DATA_ARRAY.to_vec());
+        let buf = Buffer::new(79, &KV_DATA_ARRAY[..], CAPACITY);
 
         let test_table = vec![(84u64, b"foo"), (84u64, b"bar")];
 
@@ -268,14 +325,22 @@ mod tests {
 
     #[test]
     fn buffer_read_at() {
-        let mut buf = Buffer::new(79, vec![72, 97, 108, 108, 101, 108, 117, 106, 97, 104]);
+        let mut buf = Buffer::new(
+            79,
+            &[72, 97, 108, 108, 101, 108, 117, 106, 97, 104],
+            CAPACITY,
+        );
         let v = buf.read_at(82, 5).expect("read at 82");
         assert_eq!(v, vec![108, 101, 108, 117, 106])
     }
 
     #[test]
     fn buffer_read_at_out_of_bounds() {
-        let mut buf = Buffer::new(79, vec![72, 97, 108, 108, 101, 108, 117, 106, 97, 104]);
+        let mut buf = Buffer::new(
+            79,
+            &[72, 97, 108, 108, 101, 108, 117, 106, 97, 104],
+            CAPACITY,
+        );
         let test_table = vec![(85, 5), (86, 4), (90, 4), (100, 1), (70, 3)];
 
         for (addr, size) in test_table {
@@ -286,7 +351,7 @@ mod tests {
 
     #[test]
     fn buffer_addr_belongs_to_key() {
-        let buf = Buffer::new(79, KV_DATA_ARRAY.to_vec());
+        let buf = Buffer::new(79, &KV_DATA_ARRAY[..], CAPACITY);
         let test_table = vec![(79u64, b"foo", true), (79u64, b"bar", false)];
 
         for (addr, k, expected) in test_table {
@@ -299,7 +364,7 @@ mod tests {
 
     #[test]
     fn buffer_addr_belongs_to_key_out_of_bounds() {
-        let buf = Buffer::new(79, KV_DATA_ARRAY.to_vec());
+        let buf = Buffer::new(79, &KV_DATA_ARRAY[..], CAPACITY);
         let test_table = vec![
             (790u64, b"foo"),
             (78u64, b"foo"),
@@ -316,7 +381,11 @@ mod tests {
 
     #[test]
     fn buffer_validate_bounds() {
-        let buf = Buffer::new(79, vec![72, 97, 108, 108, 101, 108, 117, 106, 97, 104]);
+        let buf = Buffer::new(
+            79,
+            &[72, 97, 108, 108, 101, 108, 117, 106, 97, 104],
+            CAPACITY,
+        );
         let test_table = vec![
             (85, 90, true),
             (86, 90, true),
