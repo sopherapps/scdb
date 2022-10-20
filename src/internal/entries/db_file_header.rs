@@ -568,22 +568,6 @@ mod tests {
         }
     }
 
-    /// Generates an empty index array basing on block size, max_keys and redundant_blocks
-    fn generate_empty_index_array(
-        max_keys: u64,
-        redundant_blocks: u16,
-        block_size: u32,
-    ) -> Vec<u8> {
-        let items_per_index_block =
-            (block_size as f64 / INDEX_ENTRY_SIZE_IN_BYTES as f64).floor() as u64;
-        let number_of_index_blocks = (max_keys as f64 / items_per_index_block as f64).ceil() as u64
-            + redundant_blocks as u64;
-        vec![
-            0;
-            (items_per_index_block * number_of_index_blocks * INDEX_ENTRY_SIZE_IN_BYTES) as usize
-        ]
-    }
-
     /// Returns a file that has the given data array written to it.
     fn generate_file_with_data(file_path: &str, data_array: &[u8]) -> io::Result<File> {
         let mut file = OpenOptions::new()
