@@ -20,9 +20,9 @@ was hard to come by.
 scdb is meant to be like the 'localStorage' of backend and desktop (and possibly mobile) systems.
 Of course to make it a little more appealing, it has some extra features like:
 
-- Time-to-live (TTL) where a key-value pair expires after a given time (pending implementation)
-- Non-blocking reads from separate processes, and threads (pending implementation).
-- Fast Sequential writes to the store, queueing any writes from multiple processes and threads (pending implementation).
+- Time-to-live (TTL) where a key-value pair expires after a given time
+- Non-blocking reads from separate processes, and threads.
+- Fast Sequential writes to the store, queueing any writes from multiple processes and threads.
 
 ## Contributing
 
