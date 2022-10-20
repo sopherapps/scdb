@@ -4,7 +4,7 @@ use std::io;
 use std::io::{Read, Seek, SeekFrom};
 
 pub(crate) const INDEX_ENTRY_SIZE_IN_BYTES: u64 = 8;
-const HEADER_SIZE_IN_BYTES: u64 = 100;
+pub(crate) const HEADER_SIZE_IN_BYTES: u64 = 100;
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct DbFileHeader {
@@ -69,14 +69,6 @@ impl DbFileHeader {
             .chain(&[0u8; 70])
             .map(|v| v.to_owned())
             .collect()
-    }
-
-    /// Creates a place holder for the index blocks.
-    pub(crate) fn create_empty_index_blocks_bytes(&self) -> Vec<u8> {
-        // each index entry is 8 bytes
-        let length =
-            self.number_of_index_blocks * self.items_per_index_block * INDEX_ENTRY_SIZE_IN_BYTES;
-        vec![0; length as usize]
     }
 
     /// Extracts the header from the data array
@@ -255,41 +247,6 @@ mod tests {
 
         for (max_keys, redundant_blocks, expected) in test_table {
             let got = DbFileHeader::new(max_keys, redundant_blocks).as_bytes();
-            assert_eq!(&got, &expected);
-        }
-    }
-
-    #[test]
-    #[serial]
-    fn db_file_header_create_empty_index_blocks_bytes() {
-        let block_size = get_vm_page_size();
-        type Record = (Option<u64>, Option<u16>, Vec<u8>);
-        let test_table: Vec<Record> = vec![
-            (
-                None,
-                None,
-                generate_empty_index_array(1_000_000, 1, block_size),
-            ),
-            (
-                Some(24_000_000),
-                None,
-                generate_empty_index_array(24_000_000, 1, block_size),
-            ),
-            (
-                None,
-                Some(9),
-                generate_empty_index_array(1_000_000, 9, block_size),
-            ),
-            (
-                Some(24_000_000),
-                Some(5),
-                generate_empty_index_array(24_000_000, 5, block_size),
-            ),
-        ];
-
-        for (max_keys, redundant_blocks, expected) in test_table {
-            let got =
-                DbFileHeader::new(max_keys, redundant_blocks).create_empty_index_blocks_bytes();
             assert_eq!(&got, &expected);
         }
     }

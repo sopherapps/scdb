@@ -1,7 +1,10 @@
 use crate::internal::buffers::buffer::{Buffer, Value};
+use crate::internal::entries::db_file_header::HEADER_SIZE_IN_BYTES;
 use crate::internal::utils::get_vm_page_size;
-use crate::internal::{acquire_lock, slice_to_array, DbFileHeader, KeyValueEntry};
-use std::collections::{HashMap, VecDeque};
+use crate::internal::{
+    acquire_lock, slice_to_array, DbFileHeader, KeyValueEntry, INDEX_ENTRY_SIZE_IN_BYTES,
+};
+use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::ops::DerefMut;
@@ -59,7 +62,7 @@ impl BufferPool {
 
         if should_create_new {
             let header = DbFileHeader::new(max_keys, redundant_blocks);
-            initialize_db_file(&mut file, &header, None)?;
+            initialize_db_file(&mut file, &header)?;
         };
 
         let file_size = file.seek(SeekFrom::End(0))?;
@@ -138,7 +141,7 @@ impl BufferPool {
         let mut file = acquire_lock!(self.file)?;
         let mut buffers = acquire_lock!(self.buffers)?;
         let mut file_size = acquire_lock!(self.file_size)?;
-        *file_size = reinitialize_db_file(file.deref_mut(), &header)?;
+        *file_size = initialize_db_file(file.deref_mut(), &header)?;
         buffers.clear();
         Ok(())
     }
@@ -161,34 +164,60 @@ impl BufferPool {
         let mut buffers = acquire_lock!(self.buffers)?;
         let mut file_size = acquire_lock!(self.file_size)?;
 
-        let file_ref = file.deref_mut();
-        let header: DbFileHeader = DbFileHeader::from_file(file_ref)?;
-        let index_bytes_array = get_index_as_byte_array(file_ref, &header)?;
-        let reversed_index_map: HashMap<u64, u64> = get_index_as_reversed_map(&index_bytes_array)?;
-        initialize_db_file(&mut new_file, &header, Some(index_bytes_array))?;
+        let header: DbFileHeader = DbFileHeader::from_file(&mut file)?;
+        drop(file);
 
-        let mut curr_offset = header.key_values_start_point;
-        let mut new_file_curr_offset = curr_offset;
-        while curr_offset <= *file_size {
-            let kv_byte_array = read_kv_bytes_from_file(file_ref, curr_offset)?;
-            let kv_size = kv_byte_array.len() as u64;
-            if reversed_index_map.contains_key(&curr_offset) {
-                // insert key value
-                new_file.seek(SeekFrom::Start(new_file_curr_offset))?;
-                new_file.write_all(&kv_byte_array)?;
+        // Add headers to new file
+        new_file.seek(SeekFrom::Start(0))?;
+        new_file.write_all(&header.as_bytes())?;
 
-                // update index
-                new_file.seek(SeekFrom::Start(reversed_index_map[&curr_offset]))?;
-                new_file.write_all(&new_file_curr_offset.to_be_bytes())?;
-                new_file_curr_offset += kv_size;
+        let mut index = Index::new(&self.file, &header);
+
+        let idx_entry_size = INDEX_ENTRY_SIZE_IN_BYTES as usize;
+        let zero = vec![0u8; idx_entry_size];
+        let mut idx_offset = HEADER_SIZE_IN_BYTES;
+        let mut new_file_offset = header.key_values_start_point;
+
+        for index_block in &mut index {
+            let index_block = index_block?;
+            // write index block into new file
+            new_file.seek(SeekFrom::Start(idx_offset))?;
+            new_file.write_all(&index_block)?;
+
+            let len = index_block.len();
+            let mut idx_block_cursor: usize = 0;
+            while idx_offset < len as u64 {
+                let lower = idx_block_cursor;
+                let upper = lower + idx_entry_size;
+                let idx_bytes = index_block[lower..upper].to_vec();
+
+                if idx_bytes != zero {
+                    let kv_byte_array = get_kv_bytes(&self.file, &idx_bytes)?;
+                    let kv = KeyValueEntry::from_data_array(&kv_byte_array, 0)?;
+                    if !kv.is_expired() {
+                        let kv_size = kv_byte_array.len() as u64;
+                        // insert key value
+                        new_file.seek(SeekFrom::Start(new_file_offset))?;
+                        new_file.write_all(&kv_byte_array)?;
+
+                        // update index
+                        new_file.seek(SeekFrom::Start(idx_offset))?;
+                        new_file.write_all(&new_file_offset.to_be_bytes())?;
+                        new_file_offset += kv_size;
+                    }
+                }
+
+                idx_block_cursor = upper;
+                idx_offset += INDEX_ENTRY_SIZE_IN_BYTES;
             }
-
-            curr_offset += kv_size;
         }
 
+        drop(index);
+
         buffers.clear();
+        let mut file = acquire_lock!(self.file)?;
         *file = new_file;
-        *file_size = new_file_curr_offset;
+        *file_size = new_file_offset;
 
         fs::remove_file(&self.file_path)?;
         fs::rename(&new_file_path, &self.file_path)?;
@@ -328,89 +357,91 @@ impl PartialEq for BufferPool {
     }
 }
 
-/// Initializes a new database file, giving it the header and the index place holders
-fn initialize_db_file(
-    file: &mut File,
-    header: &DbFileHeader,
-    index_bytes: Option<Vec<u8>>,
-) -> io::Result<()> {
-    let header_bytes = header.as_bytes();
-    debug_assert_eq!(header_bytes.len(), 100);
-
-    let index_block_bytes = match index_bytes {
-        None => header.create_empty_index_blocks_bytes(),
-        Some(v) => v,
-    };
-
-    file.seek(SeekFrom::Start(0))?;
-    file.write_all(&header_bytes)?;
-    file.write_all(&index_block_bytes)?;
-    file.seek(SeekFrom::Start(0))?;
-
-    Ok(())
+/// Reads a byte array for a key-value entry at the given address in the file
+fn get_kv_bytes(file: &Mutex<File>, address: &[u8]) -> io::Result<Vec<u8>> {
+    let mut file = acquire_lock!(file)?;
+    let address = u64::from_be_bytes(slice_to_array(address)?);
+    file.seek(SeekFrom::Start(address))?;
+    let mut size_bytes: [u8; 4] = [0; 4];
+    file.read(&mut size_bytes)?;
+    let size = u32::from_be_bytes(size_bytes);
+    let mut data = vec![0u8; size as usize];
+    file.seek(SeekFrom::Start(address))?;
+    file.read(&mut data)?;
+    Ok(data)
 }
 
-/// Re-initializes the database file, giving it the header and the index place holders
+/// Initializes the database file, giving it the header and the index place holders
 /// and truncating it. It returns the new file size
-fn reinitialize_db_file(file: &mut File, header: &DbFileHeader) -> io::Result<u64> {
+fn initialize_db_file(file: &mut File, header: &DbFileHeader) -> io::Result<u64> {
     let header_bytes = header.as_bytes();
     debug_assert_eq!(header_bytes.len(), 100);
 
-    let index_block_bytes = header.create_empty_index_blocks_bytes();
-
     file.seek(SeekFrom::Start(0))?;
     file.write_all(&header_bytes)?;
-    file.write_all(&index_block_bytes)?;
-    let size = header_bytes.len() as u64 + index_block_bytes.len() as u64;
+
+    // The index can be too big to fit in memory so we have to add it block by block
+    let block_size = header.net_block_size as usize;
+    for _ in 0..header.number_of_index_blocks {
+        file.write_all(&vec![0u8; block_size])?;
+    }
+
+    let size = header_bytes.len() as u64 + (header.number_of_index_blocks * header.net_block_size);
     file.set_len(size)?;
 
     Ok(size)
 }
 
-/// Extracts the key value entry's bytes array from the file given the address where to find it
-fn read_kv_bytes_from_file(file: &mut File, address: u64) -> io::Result<Vec<u8>> {
-    file.seek(SeekFrom::Start(address))?;
-    let mut size_bytes: [u8; 4] = [0; 4];
-    file.read(&mut size_bytes)?;
-    let size = u32::from_be_bytes(size_bytes);
-    let mut data = Vec::with_capacity(size as usize);
-    file.seek(SeekFrom::Start(address))?;
-    file.read(&mut data)?;
-    Ok(data)
+struct Index<'a> {
+    num_of_blocks: u64,
+    block_size: u64,
+    file: &'a Mutex<File>,
+    cursor: u64,
 }
 
-/// Extracts the index as a byte array
-fn get_index_as_byte_array(file: &mut File, header: &DbFileHeader) -> io::Result<Vec<u8>> {
-    let size = header.net_block_size * header.number_of_index_blocks;
-    let mut data = Vec::with_capacity(size as usize);
-    file.seek(SeekFrom::Start(100))?;
-    file.read(&mut data)?;
-    Ok(data)
+impl<'a> Index<'a> {
+    /// Creates a new index instance
+    fn new(file: &'a Mutex<File>, header: &DbFileHeader) -> Self {
+        Self {
+            num_of_blocks: header.number_of_index_blocks,
+            block_size: header.net_block_size,
+            file,
+            cursor: 0,
+        }
+    }
 }
 
-/// Extracts an index map that has keys as the entry offset and
-/// values as the index offset for only non-zero entry offsets
-fn get_index_as_reversed_map(index_bytes: &Vec<u8>) -> io::Result<HashMap<u64, u64>> {
-    let bytes_length = index_bytes.len();
-    let map_size = bytes_length / 8;
-    let mut map: HashMap<u64, u64> = HashMap::with_capacity(map_size);
-    let mut i = 0;
-    while i < bytes_length {
-        let entry_offset = u64::from_be_bytes(slice_to_array(&index_bytes[i..i + 8])?);
-        if entry_offset > 0 {
-            // only non-zero entries are picked because zero signifies deleted or not yet inserted
-            map.insert(entry_offset, 100 + i as u64);
+impl<'a> Iterator for &mut Index<'a> {
+    type Item = io::Result<Vec<u8>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.cursor >= self.num_of_blocks {
+            return None;
         }
 
-        i += 8;
-    }
+        let mut file = match self.file.lock() {
+            Ok(v) => v,
+            Err(e) => return Some(Err(io::Error::new(io::ErrorKind::Other, e.to_string()))),
+        };
 
-    Ok(map)
+        let mut data = vec![0u8; self.block_size as usize];
+        if let Err(e) = file.seek(SeekFrom::Start(100 + (self.cursor * self.block_size))) {
+            return Some(Err(e));
+        }
+
+        self.cursor += 1;
+
+        match file.read(&mut data) {
+            Ok(_) => Some(Ok(data)),
+            Err(e) => Some(Err(e)),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::internal::get_current_timestamp;
     use serial_test::serial;
 
     #[test]
@@ -647,6 +678,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn replace_in_file() {
         let file_name = "testdb.scdb";
         let data = &[72u8, 97, 108, 108, 101, 108, 117, 106, 97, 104];
@@ -674,6 +706,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn replace_in_pre_existing_buffer() {
         let file_name = "testdb.scdb";
         let initial_data = &[76u8, 67, 56];
@@ -718,6 +751,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn replace_out_of_bounds() {
         let file_name = "testdb.scdb";
         let initial_data = &[76u8, 67, 56];
@@ -747,6 +781,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn clear_file_works() {
         let file_name = "testdb.scdb";
         let initial_data = &[76u8, 67, 56];
@@ -773,8 +808,56 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn compact_file_works() {
-        todo!()
+        let file_name = "testdb.scdb";
+        let never_expires = KeyValueEntry::new(&b"never_expires"[..], &b"bar"[..], 0);
+        let deleted = KeyValueEntry::new(&b"deleted"[..], &b"bok"[..], 0);
+        // 1666023836u64 is some past timestamp in October 2022
+        let expired = KeyValueEntry::new(&b"expires"[..], &b"bar"[..], 1666023836u64);
+        let not_expired = KeyValueEntry::new(
+            &b"not_expired"[..],
+            &b"bar"[..],
+            get_current_timestamp() * 2,
+        );
+        // Limit the max_keys to 10 otherwise the memory will be consumed when we try to get all data in file
+        let mut pool = BufferPool::new(None, &Path::new(file_name), Some(10), Some(1), None)
+            .expect("new buffer pool");
+
+        append_buffers(&mut pool, &[(0, &[76u8, 79][..])][..]);
+
+        let mut file = acquire_lock!(pool.file).expect("acquire lock on file");
+        let header = DbFileHeader::from_file(&mut file).expect("get header");
+        drop(file);
+
+        // insert key value pairs in pool
+        insert_key_value_entry(&mut pool, &header, &never_expires);
+        insert_key_value_entry(&mut pool, &header, &deleted);
+        insert_key_value_entry(&mut pool, &header, &expired);
+        insert_key_value_entry(&mut pool, &header, &not_expired);
+
+        // delete the key-value to be deleted
+        delete_key_value(&mut pool, &header, &deleted);
+
+        pool.compact_file().expect("compact file");
+
+        let file_size = get_actual_file_size(file_name);
+        let (data_in_file, _) = read_from_file(file_name, 0, file_size as usize);
+        let pool_file_size = get_pool_file_size(&mut pool);
+
+        let buffers = acquire_lock!(pool.buffers).expect("get lock on buffers");
+        let buffer_len = buffers.len();
+        drop(buffers);
+
+        assert_eq!(buffer_len, 0);
+        assert_eq!(pool_file_size, file_size);
+
+        assert!(key_value_exists(&data_in_file, &header, &never_expires));
+        assert!(key_value_exists(&data_in_file, &header, &not_expired));
+        assert!(!key_value_exists(&data_in_file, &header, &deleted));
+        assert!(!key_value_exists(&data_in_file, &header, &expired));
+
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
     }
 
     #[test]
@@ -864,6 +947,40 @@ mod tests {
 
         for (offset, data) in pairs {
             buffers.push_back(Buffer::new(*offset, data, pool.buffer_size));
+        }
+    }
+
+    /// Deletes a given key value in the given pool
+    fn delete_key_value(pool: &mut BufferPool, header: &DbFileHeader, kv: &KeyValueEntry) {
+        let addr = header.get_index_offset(kv.key);
+        pool.replace(addr, &0u64.to_be_bytes())
+            .expect("replace deleted key with empty");
+    }
+
+    /// Inserts a key value entry into the pool, updating the index also
+    fn insert_key_value_entry(pool: &mut BufferPool, header: &DbFileHeader, kv: &KeyValueEntry) {
+        let idx_addr = header.get_index_offset(kv.key);
+        let kv_addr = pool
+            .append(&mut kv.as_bytes())
+            .expect(&format!("inserts key value {:?}", &kv));
+
+        pool.replace(idx_addr, &kv_addr.to_be_bytes())
+            .expect(&format!("updates index of {:?}", &kv));
+    }
+
+    /// Checks whether a given key value entry exists in the data array got from the file
+    fn key_value_exists(data: &Vec<u8>, header: &DbFileHeader, kv: &KeyValueEntry) -> bool {
+        let idx_item_size = INDEX_ENTRY_SIZE_IN_BYTES as usize;
+        let idx_addr = header.get_index_offset(kv.key) as usize;
+        let kv_addr = data[idx_addr..idx_addr + idx_item_size].to_vec();
+        if kv_addr != vec![0u8; idx_item_size] {
+            let kv_addr = u64::from_be_bytes(slice_to_array(&kv_addr[..]).expect("slice to array"));
+            match KeyValueEntry::from_data_array(data, kv_addr as usize) {
+                Ok(_) => true,
+                Err(_) => false,
+            }
+        } else {
+            false
         }
     }
 }
