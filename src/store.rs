@@ -409,7 +409,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn compact_removes_deleted_and_expired_filed() {
+    fn compact_removes_deleted_and_expired_from_file() {
         // pre-clean up for the right results
         fs::remove_dir_all(STORE_PATH).ok();
 
