@@ -229,8 +229,8 @@ impl BufferPool {
     /// Returns the Some(Value) at the given address if the key there corresponds to the given key
     /// Otherwise, it returns None
     /// This is to handle hash collisions.
-    pub(crate) fn get_value(&mut self, address: u64, key: &[u8]) -> io::Result<Option<Value>> {
-        if address == 0 {
+    pub(crate) fn get_value(&mut self, kv_address: u64, key: &[u8]) -> io::Result<Option<Value>> {
+        if kv_address == 0 {
             return Ok(None);
         }
 
@@ -239,8 +239,8 @@ impl BufferPool {
         // loop in reverse, starting at the back
         // since the latest buffers are the ones updated when new changes occur
         for buf in buffers.iter_mut().rev() {
-            if buf.contains(address) {
-                return buf.get_value(address, key);
+            if buf.contains(kv_address) {
+                return buf.get_value(kv_address, key);
             }
         }
 
@@ -250,11 +250,15 @@ impl BufferPool {
 
         let mut buf: Vec<u8> = vec![0; self.buffer_size];
         let mut file = acquire_lock!(self.file)?;
-        file.seek(SeekFrom::Start(address))?;
+        file.seek(SeekFrom::Start(kv_address))?;
         let bytes_read = file.read(&mut buf)?;
 
         // update buffers only upto actual data read (cater for partially filled buffer)
-        buffers.push_back(Buffer::new(address, &buf[..bytes_read], self.buffer_size));
+        buffers.push_back(Buffer::new(
+            kv_address,
+            &buf[..bytes_read],
+            self.buffer_size,
+        ));
 
         let entry: KeyValueEntry = KeyValueEntry::from_data_array(&buf, 0)?;
 
@@ -267,14 +271,24 @@ impl BufferPool {
         Ok(value)
     }
 
-    /// Checks to see if the given address is for the given key
-    pub(crate) fn addr_belongs_to_key(&mut self, address: u64, key: &[u8]) -> io::Result<bool> {
+    /// Checks to see if the given kv address is for the given key.
+    /// Note that this returns true for expired keys as long as compaction has not yet been done.
+    /// This avoids duplicate entries for the same key being tracked in separate index entries
+    ///
+    /// It also returns false if the address goes beyond the size of the file
+    pub(crate) fn addr_belongs_to_key(&mut self, kv_address: u64, key: &[u8]) -> io::Result<bool> {
+        let file_size = acquire_lock!(self.file_size)?;
+        if kv_address >= *file_size {
+            return Ok(false);
+        }
+        drop(file_size);
+
         let mut buffers = acquire_lock!(self.buffers)?;
         // loop in reverse, starting at the back
         // since the latest buffers are the ones updated when new changes occur
         for buf in buffers.iter_mut().rev() {
-            if buf.contains(address) {
-                return buf.addr_belongs_to_key(address, key);
+            if buf.contains(kv_address) {
+                return buf.addr_belongs_to_key(kv_address, key);
             }
         }
 
@@ -284,11 +298,15 @@ impl BufferPool {
 
         let mut buf: Vec<u8> = vec![0; self.buffer_size];
         let mut file = acquire_lock!(self.file)?;
-        file.seek(SeekFrom::Start(address))?;
+        file.seek(SeekFrom::Start(kv_address))?;
         let bytes_read = file.read(&mut buf)?;
 
         // update buffers only upto actual data read (cater for partially filled buffer)
-        buffers.push_back(Buffer::new(address, &buf[..bytes_read], self.buffer_size));
+        buffers.push_back(Buffer::new(
+            kv_address,
+            &buf[..bytes_read],
+            self.buffer_size,
+        ));
 
         let entry: KeyValueEntry = KeyValueEntry::from_data_array(&buf, 0)?;
 
@@ -935,25 +953,80 @@ mod tests {
     #[test]
     #[serial]
     fn addr_belongs_to_key_works() {
-        todo!()
+        let file_name = "testdb.scdb";
+        let kv1 = KeyValueEntry::new(&b"never"[..], &b"bar"[..], 0);
+        let kv2 = KeyValueEntry::new(&b"foo"[..], &b"baracuda"[..], 0);
+        let mut pool = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
+
+        let mut file = acquire_lock!(pool.file).expect("acquire lock on file");
+        let header = DbFileHeader::from_file(&mut file).expect("get header");
+        drop(file);
+
+        insert_key_value_entry(&mut pool, &header, &kv1);
+        insert_key_value_entry(&mut pool, &header, &kv2);
+
+        let kv1_index_address = get_kv_address(&mut pool, &header, &kv1);
+        let kv2_index_address = get_kv_address(&mut pool, &header, &kv2);
+        assert!(pool
+            .addr_belongs_to_key(kv1_index_address, kv1.key)
+            .expect("addr_belongs_to_key kv1"));
+        assert!(pool
+            .addr_belongs_to_key(kv2_index_address, kv2.key)
+            .expect("addr_belongs_to_key kv2"));
+        assert!(!pool
+            .addr_belongs_to_key(kv1_index_address, kv2.key)
+            .expect("addr_belongs_to_key kv1"));
+        assert!(!pool
+            .addr_belongs_to_key(kv2_index_address, kv1.key)
+            .expect("addr_belongs_to_key kv2"));
+
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
     }
 
     #[test]
     #[serial]
-    fn addr_belongs_to_key_deleted() {
-        todo!()
-    }
+    fn addr_belongs_to_key_expired_returns_true() {
+        let file_name = "testdb.scdb";
+        // 1666023836u64 is some past timestamp in October 2022 so this is expired
+        let kv = KeyValueEntry::new(&b"expires"[..], &b"bar"[..], 1666023836u64);
+        let mut pool = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
 
-    #[test]
-    #[serial]
-    fn addr_belongs_to_key_expired() {
-        todo!()
+        let mut file = acquire_lock!(pool.file).expect("acquire lock on file");
+        let header = DbFileHeader::from_file(&mut file).expect("get header");
+        drop(file);
+
+        insert_key_value_entry(&mut pool, &header, &kv);
+        let kv_index_address = get_kv_address(&mut pool, &header, &kv);
+
+        assert!(pool
+            .addr_belongs_to_key(kv_index_address, kv.key)
+            .expect("addr_belongs_to_key kv"));
+
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
     }
 
     #[test]
     #[serial]
     fn addr_belongs_to_key_works_out_of_bounds() {
-        todo!()
+        let file_name = "testdb.scdb";
+        let kv = KeyValueEntry::new(&b"foo"[..], &b"bar"[..], 0);
+        let mut pool = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
+
+        let mut file = acquire_lock!(pool.file).expect("acquire lock on file");
+        let header = DbFileHeader::from_file(&mut file).expect("get header");
+        drop(file);
+
+        insert_key_value_entry(&mut pool, &header, &kv);
+        let file_size = get_actual_file_size(file_name);
+
+        assert!(!pool
+            .addr_belongs_to_key(file_size, kv.key)
+            .expect("addr_belongs_to_key kv"));
+
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
     }
 
     #[test]
