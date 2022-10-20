@@ -30,7 +30,7 @@ pub(crate) struct BufferPool {
     // These are used only for reads
     buffers: Mutex<VecDeque<Buffer>>,
     pub(crate) file: Mutex<File>,
-    file_path: PathBuf,
+    pub(crate) file_path: PathBuf,
     pub(crate) file_size: Mutex<u64>,
 }
 
@@ -205,6 +205,10 @@ impl BufferPool {
                         new_file.seek(SeekFrom::Start(idx_offset))?;
                         new_file.write_all(&new_file_offset.to_be_bytes())?;
                         new_file_offset += kv_size;
+                    } else {
+                        // if expired, update index to zero
+                        new_file.seek(SeekFrom::Start(idx_offset))?;
+                        new_file.write_all(&zero)?;
                     }
                 }
 
@@ -798,6 +802,9 @@ mod tests {
     #[serial]
     fn compact_file_works() {
         let file_name = "testdb.scdb";
+        // pre-clean up for right results
+        fs::remove_file(&file_name).ok();
+
         let never_expires = KeyValueEntry::new(&b"never_expires"[..], &b"bar"[..], 0);
         let deleted = KeyValueEntry::new(&b"deleted"[..], &b"bok"[..], 0);
         // 1666023836u64 is some past timestamp in October 2022
@@ -826,18 +833,30 @@ mod tests {
         // delete the key-value to be deleted
         delete_key_value(&mut pool, &header, &deleted);
 
+        let initial_file_size = get_actual_file_size(file_name);
+
         pool.compact_file().expect("compact file");
 
-        let file_size = get_actual_file_size(file_name);
-        let (data_in_file, _) = read_from_file(file_name, 0, file_size as usize);
+        let final_file_size = get_actual_file_size(file_name);
+        let (data_in_file, _) = read_from_file(file_name, 0, final_file_size as usize);
         let pool_file_size = get_pool_file_size(&mut pool);
 
         let buffers = acquire_lock!(pool.buffers).expect("get lock on buffers");
         let buffer_len = buffers.len();
         drop(buffers);
 
+        let expected_file_size_reduction = deleted.size as u64 + expired.size as u64;
+        let expired_kv_address = get_kv_address(&mut pool, &header, &expired);
+        let deleted_kv_address = get_kv_address(&mut pool, &header, &deleted);
+
         assert_eq!(buffer_len, 0);
-        assert_eq!(pool_file_size, file_size);
+        assert_eq!(pool_file_size, final_file_size);
+        assert_eq!(
+            initial_file_size - final_file_size,
+            expected_file_size_reduction
+        );
+        assert_eq!(expired_kv_address, 0);
+        assert_eq!(deleted_kv_address, 0);
 
         assert!(key_value_exists(&data_in_file, &header, &never_expires));
         assert!(key_value_exists(&data_in_file, &header, &not_expired));
