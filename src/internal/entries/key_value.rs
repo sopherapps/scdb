@@ -36,21 +36,21 @@ impl<'a> KeyValueEntry<'a> {
     /// Extracts the key value entry from the data array
     pub(crate) fn from_data_array(data: &'a [u8], offset: usize) -> io::Result<Self> {
         let data_len = data.len();
-        let size_slice = safe_slice!(&data, offset, offset + 4, data_len)?;
+        let size_slice = safe_slice!(data, offset, offset + 4, data_len)?;
         let size = u32::from_be_bytes(internal::slice_to_array(size_slice)?);
 
-        let key_size_slice = safe_slice!(&data, offset + 4, offset + 8, data_len)?;
+        let key_size_slice = safe_slice!(data, offset + 4, offset + 8, data_len)?;
         let key_size = u32::from_be_bytes(internal::slice_to_array(key_size_slice)?);
 
         let k_size = key_size as usize;
-        let key = safe_slice!(&data, offset + 8, offset + 8 + k_size, data_len)?;
+        let key = safe_slice!(data, offset + 8, offset + 8 + k_size, data_len)?;
 
-        let expiry_slice = safe_slice!(&data, offset + 8 + k_size, offset + k_size + 16, data_len)?;
-        let expiry = u64::from_be_bytes(internal::slice_to_array(&expiry_slice)?);
+        let expiry_slice = safe_slice!(data, offset + 8 + k_size, offset + k_size + 16, data_len)?;
+        let expiry = u64::from_be_bytes(internal::slice_to_array(expiry_slice)?);
 
         let value_size = (size - key_size - KEY_VALUE_MIN_SIZE_IN_BYTES) as usize;
         let value = safe_slice!(
-            &data,
+            data,
             offset + k_size + 16,
             offset + k_size + 16 + value_size,
             data_len

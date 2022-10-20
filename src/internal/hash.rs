@@ -2,21 +2,6 @@ use twox_hash::xxh3::hash64;
 
 /// Generates the hash of the key for the given block length
 /// to get the position in the block that the given key corresponds to
-///
-/// # Example
-///
-/// ```
-/// let length = 67788;
-/// let key = "foo";
-/// let value = 78;
-///
-/// let mut items: Vec<int64> = Vec::with_capacity(length);
-/// items.resize(length, 0);
-///
-/// let hash = get_hash("foo", length);
-/// items[hash] = value;
-/// ```
-///
 pub(crate) fn get_hash(key: &[u8], block_length: u64) -> u64 {
     let hash = hash64(key);
     hash % block_length

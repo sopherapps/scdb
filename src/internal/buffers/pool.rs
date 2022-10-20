@@ -217,8 +217,6 @@ impl BufferPool {
             }
         }
 
-        drop(index);
-
         buffers.clear();
         let mut file = acquire_lock!(self.file)?;
         *file = new_file;
@@ -382,10 +380,6 @@ impl PartialEq for BufferPool {
             && *file_size == *other_file_size
             && *buffers == *other_buffers
     }
-
-    fn ne(&self, other: &Self) -> bool {
-        !self.eq(other)
-    }
 }
 
 /// Reads a byte array for a key-value entry at the given address in the file
@@ -396,13 +390,13 @@ fn get_kv_bytes(file: &Mutex<File>, address: &[u8]) -> io::Result<Vec<u8>> {
     // get size of the whole key value entry
     let mut size_bytes: [u8; 4] = [0; 4];
     file.seek(SeekFrom::Start(address))?;
-    file.read(&mut size_bytes)?;
+    file.read_exact(&mut size_bytes)?;
     let size = u32::from_be_bytes(size_bytes);
 
     // get the key value entry itself, basing on the size it has
     let mut data = vec![0u8; size as usize];
     file.seek(SeekFrom::Start(address))?;
-    file.read(&mut data)?;
+    file.read_exact(&mut data)?;
 
     Ok(data)
 }

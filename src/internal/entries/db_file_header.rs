@@ -21,14 +21,8 @@ pub(crate) struct DbFileHeader {
 impl DbFileHeader {
     /// Creates a new DbFileHeader
     pub(crate) fn new(max_keys: Option<u64>, redundant_blocks: Option<u16>) -> Self {
-        let max_keys = match max_keys {
-            None => 1_000_000,
-            Some(v) => v,
-        };
-        let redundant_blocks = match redundant_blocks {
-            None => 1,
-            Some(v) => v,
-        };
+        let max_keys = max_keys.unwrap_or(1_000_000);
+        let redundant_blocks = redundant_blocks.unwrap_or(1);
         let block_size = utils::get_vm_page_size();
         let mut header = Self {
             title: "Scdb versn 0.001".to_string(),
@@ -76,7 +70,10 @@ impl DbFileHeader {
         if data.len() < HEADER_SIZE_IN_BYTES as usize {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("data should be at least 100 bytes in length"),
+                format!(
+                    "data should be at least {} bytes in length",
+                    HEADER_SIZE_IN_BYTES
+                ),
             ));
         }
 
@@ -109,7 +106,10 @@ impl DbFileHeader {
         if data_len < HEADER_SIZE_IN_BYTES as usize {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("data should be at least 100 bytes in length"),
+                format!(
+                    "data should be at least {} bytes in length",
+                    HEADER_SIZE_IN_BYTES
+                ),
             ));
         }
 

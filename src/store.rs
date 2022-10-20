@@ -173,15 +173,12 @@ impl Drop for Store {
 }
 
 /// Initializes the scheduler that is to run the background task of compacting the store
-/// If interval (in seconds) passed is 0, No scheduler is created. The default interval is 1 hours
+/// If interval (in seconds) passed is 0, No scheduler is created. The default interval is 1 hour
 fn initialize_compaction_scheduler(
     interval: Option<u32>,
     buffer_pool: &Arc<Mutex<BufferPool>>,
 ) -> Option<ScheduleHandle> {
-    let interval = match interval {
-        None => 3_600u32,
-        Some(v) => v,
-    };
+    let interval = interval.unwrap_or(3_600u32);
 
     if interval > 0 {
         let mut scheduler = Scheduler::new();

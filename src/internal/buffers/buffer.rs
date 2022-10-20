@@ -67,7 +67,7 @@ impl Buffer {
         self.data.append(&mut data);
         let prev_right_offset = self.right_offset;
         self.right_offset += data_length as u64;
-        return prev_right_offset;
+        prev_right_offset
     }
 
     /// Replaces the data at the given address with the new data

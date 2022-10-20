@@ -4,8 +4,6 @@ use std::mem;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[cfg(unix)]
-use libc;
 #[cfg(windows)]
 use winapi::um::sysinfoapi::{GetSystemInfo, LPSYSTEM_INFO, SYSTEM_INFO};
 
