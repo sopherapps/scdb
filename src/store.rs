@@ -207,8 +207,9 @@ fn extract_header_from_buffer_pool(buffer_pool: &BufferPool) -> io::Result<DbFil
 
 #[cfg(test)]
 mod tests {
-    use std::io;
+    use std::fs::OpenOptions;
     use std::io::{Seek, SeekFrom};
+    use std::{fs, io, thread};
 
     use serial_test::serial;
 
@@ -227,7 +228,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn set_and_read_multiple_key_value_pairs() {
+    fn set_works() {
         let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
         store.clear().expect("store failed to clear");
         let keys = get_keys();
@@ -238,11 +239,37 @@ mod tests {
 
         let expected_values = wrap_values_in_result(&values);
         assert_list_eq!(&expected_values, &received_values);
+
+        fs::remove_dir_all(STORE_PATH).expect("delete store folder");
     }
 
     #[test]
     #[serial]
-    fn set_and_update() {
+    fn set_with_ttl_works() {
+        let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+        store.clear().expect("store failed to clear");
+        let keys = get_keys();
+        let values = get_values();
+
+        insert_test_data(&mut store, &keys[0..2].to_vec(), &values, None);
+        insert_test_data(&mut store, &keys[2..].to_vec(), &values, Some(1)); // 1 second ttl
+
+        // wait for expiry and some more just to be safe
+        thread::sleep(Duration::from_secs(2));
+
+        let received_values = get_values_for_keys(&mut store, &keys);
+        let mut expected_values = wrap_values_in_result(&values[..2]);
+        for _ in 2..keys.len() {
+            expected_values.push(Ok(None));
+        }
+
+        assert_list_eq!(&expected_values, &received_values);
+        fs::remove_dir_all(STORE_PATH).expect("delete store folder");
+    }
+
+    #[test]
+    #[serial]
+    fn set_can_update() {
         let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
         store.clear().expect("store failed to clear");
         let keys = get_keys();
@@ -266,11 +293,13 @@ mod tests {
 
         assert_list_eq!(&expected_unchanged_values, &received_unchanged_values);
         assert_list_eq!(&expected_updated_values, &received_updated_values);
+
+        fs::remove_dir_all(STORE_PATH).expect("delete store folder");
     }
 
     #[test]
     #[serial]
-    fn set_and_delete_multiple_key_value_pairs() {
+    fn delete_works() {
         let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
         store.clear().expect("store failed to clear");
         let keys = get_keys();
@@ -287,11 +316,13 @@ mod tests {
             expected_values.push(Ok(None));
         }
         assert_list_eq!(&expected_values, &received_values);
+
+        fs::remove_dir_all(STORE_PATH).expect("delete store folder");
     }
 
     #[test]
     #[serial]
-    fn set_and_clear() {
+    fn clear_works() {
         let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
         store.clear().expect("store failed to clear");
         let keys = get_keys();
@@ -304,11 +335,13 @@ mod tests {
         let expected_values: Vec<io::Result<Option<Vec<u8>>>> =
             keys.iter().map(|_| Ok(None)).collect();
         assert_list_eq!(&expected_values, &received_values);
+
+        fs::remove_dir_all(STORE_PATH).expect("delete store folder");
     }
 
     #[test]
     #[serial]
-    fn persist_to_file() {
+    fn persists_to_file() {
         let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
         store
             .clear()
@@ -324,11 +357,13 @@ mod tests {
         let received_values = get_values_for_keys(&mut store, &keys);
         let expected_values = wrap_values_in_result(&values);
         assert_list_eq!(&expected_values, &received_values);
+
+        fs::remove_dir_all(STORE_PATH).expect("delete store folder");
     }
 
     #[test]
     #[serial]
-    fn persist_to_file_after_delete() {
+    fn persists_to_file_after_delete() {
         let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
         store.clear().expect("store failed to clear");
         let keys = get_keys();
@@ -348,11 +383,13 @@ mod tests {
             expected_values.push(Ok(None));
         }
         assert_list_eq!(&expected_values, &received_values);
+
+        fs::remove_dir_all(STORE_PATH).expect("delete store folder");
     }
 
     #[test]
     #[serial]
-    fn persist_to_file_after_clear() {
+    fn persists_to_file_after_clear() {
         let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
         store.clear().expect("store failed to clear");
         let keys = get_keys();
@@ -369,57 +406,129 @@ mod tests {
             keys.iter().map(|_| Ok(None)).collect();
 
         assert_list_eq!(&expected_values, &received_values);
+
+        fs::remove_dir_all(STORE_PATH).expect("delete store folder");
     }
 
     #[test]
     #[serial]
     fn compact_removes_deleted_and_expired_filed() {
+        // pre-clean up for the right results
+        fs::remove_dir_all(STORE_PATH).ok();
+
         let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
         store.clear().expect("store failed to clear");
         let keys = get_keys();
         let values = get_values();
-        let expired_values = values[0..2].to_vec();
-        let expired_keys = keys[0..2].to_vec();
 
-        insert_test_data(&mut store, &keys, &values, None);
-        insert_test_data(&mut store, &expired_keys, &expired_values, Some(0));
+        insert_test_data(
+            &mut store,
+            &keys[0..2].to_vec(),
+            &values[0..2].to_vec(),
+            Some(1),
+        );
+        insert_test_data(&mut store, &keys[2..].to_vec(), &values[2..].to_vec(), None);
+        delete_keys(&mut store, &keys[2..3].to_vec());
 
-        let buffer_pool = acquire_lock!(store.buffer_pool).expect("get lock on buffer pool");
-        let mut file = acquire_lock!(buffer_pool.file).expect("get lock on db file");
-        let initial_file_size = file.seek(SeekFrom::End(0)).expect("seek in file");
-        drop(file);
-        let initial_cached_size_guard =
-            acquire_lock!(buffer_pool.file_size).expect("get lock on file_size");
-        let initial_cached_size = *initial_cached_size_guard;
-        drop(initial_cached_size_guard);
+        let buffer_pool = acquire_lock!(store.buffer_pool).expect("acquire lock on buffer pool");
+        let db_file_path = buffer_pool.file_path.to_str().unwrap().to_owned();
         drop(buffer_pool);
+
+        // wait for some keys to expire
+        thread::sleep(Duration::from_secs(2));
+
+        let original_file_size = get_file_size(&db_file_path);
 
         store.compact().expect("compact store");
 
+        let final_file_size = get_file_size(&db_file_path);
+        let expected_file_size_reduction = keys[0..3]
+            .iter()
+            .zip(&values[0..3])
+            .map(|(k, v)| KeyValueEntry::new(k, v, 0).as_bytes().len() as u64)
+            .reduce(|accum, v| accum + v)
+            .unwrap();
+
+        assert_eq!(
+            original_file_size - final_file_size,
+            expected_file_size_reduction
+        );
+
+        // And the store is still acting as before
         let received_values = get_values_for_keys(&mut store, &keys);
-        let received_unchanged_values = &received_values[2..];
-        let received_expired_values = &received_values[0..2];
+        let received_unchanged_values = &received_values[3..];
+        let received_removed_values = &received_values[0..3];
 
         // unchanged
-        let expected_unchanged_values = wrap_values_in_result(&values[2..]);
+        let expected_unchanged_values = wrap_values_in_result(&values[3..]);
         let expected_expired_values: Vec<io::Result<Option<Vec<u8>>>> =
-            expired_keys.iter().map(|_| Ok(None)).collect();
-
-        let buffer_pool = acquire_lock!(store.buffer_pool).expect("get lock on buffer pool");
-        let mut file = acquire_lock!(buffer_pool.file).expect("failed to get lock on db file");
-        let final_file_size = file.seek(SeekFrom::End(0)).expect("failed to seek in file");
-        drop(file);
-        let final_cached_size_guard =
-            acquire_lock!(buffer_pool.file_size).expect("get lock on file_size");
-        let final_cached_size = *final_cached_size_guard;
-        drop(final_cached_size_guard);
-        drop(buffer_pool);
+            keys[0..3].iter().map(|_| Ok(None)).collect();
 
         assert_list_eq!(&expected_unchanged_values, &received_unchanged_values);
-        assert_list_eq!(&expected_expired_values, &received_expired_values);
-        assert_eq!(initial_file_size, initial_cached_size);
-        assert_eq!(final_file_size, final_cached_size);
-        assert!(initial_file_size > final_file_size);
+        assert_list_eq!(&expected_expired_values, &received_removed_values);
+
+        fs::remove_dir_all(STORE_PATH).expect("delete store folder");
+    }
+
+    #[test]
+    #[serial]
+    fn background_task_compacts() {
+        // pre-clean up for the right results
+        fs::remove_dir_all(STORE_PATH).ok();
+
+        // set the compaction interval to 1 second
+        let mut store = Store::new(STORE_PATH, None, None, None, Some(1)).expect("create store");
+        store.clear().expect("store failed to clear");
+        let keys = get_keys();
+        let values = get_values();
+
+        insert_test_data(
+            &mut store,
+            &keys[0..2].to_vec(),
+            &values[0..2].to_vec(),
+            Some(1),
+        );
+        insert_test_data(&mut store, &keys[2..].to_vec(), &values[2..].to_vec(), None);
+        delete_keys(&mut store, &keys[2..3].to_vec());
+
+        let buffer_pool = acquire_lock!(store.buffer_pool).expect("acquire lock on buffer pool");
+        let db_file_path = buffer_pool.file_path.to_str().unwrap().to_owned();
+        drop(buffer_pool);
+
+        let original_file_size = get_file_size(&db_file_path);
+
+        // wait for some keys to expire
+        thread::sleep(Duration::from_secs(2));
+
+        // store.compact().expect("compact store");
+
+        let final_file_size = get_file_size(&db_file_path);
+        let expected_file_size_reduction = keys[0..3]
+            .iter()
+            .zip(&values[0..3])
+            .map(|(k, v)| KeyValueEntry::new(k, v, 0).as_bytes().len() as u64)
+            .reduce(|accum, v| accum + v)
+            .unwrap();
+
+        assert_eq!(
+            original_file_size - final_file_size,
+            expected_file_size_reduction
+        );
+
+        // And the store is still acting as before
+        let received_values = get_values_for_keys(&mut store, &keys);
+        let received_unchanged_values = &received_values[3..];
+        let received_removed_values = &received_values[0..3];
+
+        // unchanged
+        let expected_unchanged_values = wrap_values_in_result(&values[3..]);
+        let expected_expired_values: Vec<io::Result<Option<Vec<u8>>>> =
+            keys[0..3].iter().map(|_| Ok(None)).collect();
+
+        assert_list_eq!(&expected_unchanged_values, &received_unchanged_values);
+        assert_list_eq!(&expected_expired_values, &received_removed_values);
+
+        fs::remove_dir_all(STORE_PATH).expect("delete store folder");
     }
 
     /// Deletes the given keys in the store
@@ -427,6 +536,15 @@ mod tests {
         for k in keys_to_delete {
             store.delete(k).expect(&format!("delete key {:?}", k));
         }
+    }
+
+    /// Returns the actual file size of the file at the given path
+    fn get_file_size(file_path: &str) -> u64 {
+        let mut file = OpenOptions::new()
+            .read(true)
+            .open(file_path)
+            .expect(&format!("open file {}", file_path));
+        file.seek(SeekFrom::End(0)).expect("get file size")
     }
 
     /// Gets a vector of responses from the store when store.get is called
@@ -460,7 +578,7 @@ mod tests {
 
     /// Gets keys for testing
     fn get_keys() -> Vec<Vec<u8>> {
-        ["hey", "hi", "yoo-hoo", "bonjour"]
+        ["hey", "hi", "yoo-hoo", "bonjour", "oloota", "orirota"]
             .into_iter()
             .map(|v| v.to_string().into_bytes())
             .collect()
@@ -468,10 +586,17 @@ mod tests {
 
     /// Gets values for testing
     fn get_values() -> Vec<Vec<u8>> {
-        ["English", "English", "Slang", "French"]
-            .into_iter()
-            .map(|v| v.to_string().into_bytes())
-            .collect()
+        [
+            "English",
+            "English",
+            "Slang",
+            "French",
+            "Runyoro",
+            "Runyakole",
+        ]
+        .into_iter()
+        .map(|v| v.to_string().into_bytes())
+        .collect()
     }
 
     /// Wraps values in Result<Option<T>>

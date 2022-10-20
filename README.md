@@ -60,7 +60,7 @@ Here are those that have been developed:
 - [x] Add tests for internal::buffers::Buffer
 - [x] Add tests for internal::buffers::Value
 - [x] Add tests for internal::buffers::BufferPool
-- [ ] Add tests for store::Store
+- [x] Add tests for store::Store
 - [ ] Add GitHub actions for CI/CD
 - [ ] Add package documentation
 - [ ] Add benchmarks
