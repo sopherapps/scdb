@@ -4,7 +4,7 @@ use crate::internal::macros::safe_slice;
 use std::fmt::Debug;
 use std::io;
 
-const KEY_VALUE_MIN_SIZE_IN_BYTES: u32 = 4 + 4 + 8;
+pub(crate) const KEY_VALUE_MIN_SIZE_IN_BYTES: u32 = 4 + 4 + 8;
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct KeyValueEntry<'a> {

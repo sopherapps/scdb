@@ -316,6 +316,10 @@ impl BufferPool {
 
     /// Reads an arbitrary array at the given address and of given size and returns it
     pub(crate) fn read_at(&mut self, address: u64, size: usize) -> io::Result<Vec<u8>> {
+        let file_size = acquire_lock!(self.file_size)?;
+        self.validate_bounds(address, address + size as u64, *file_size)?;
+        drop(file_size);
+
         let mut buffers = acquire_lock!(self.buffers)?;
         // loop in reverse, starting at the back
         // since the latest buffers are the ones updated when new changes occur
@@ -423,6 +427,7 @@ fn initialize_db_file(file: &mut File, header: &DbFileHeader) -> io::Result<u64>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::internal::entries::key_value::KEY_VALUE_MIN_SIZE_IN_BYTES;
     use crate::internal::get_current_timestamp;
     use serial_test::serial;
 
@@ -1032,13 +1037,67 @@ mod tests {
     #[test]
     #[serial]
     fn read_at_works() {
-        todo!()
+        let file_name = "testdb.scdb";
+        let kv = KeyValueEntry::new(&b"kv"[..], &b"bar"[..], 0);
+        let mut pool = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
+
+        let mut file = acquire_lock!(pool.file).expect("acquire lock on file");
+        let header = DbFileHeader::from_file(&mut file).expect("get header");
+        drop(file);
+
+        insert_key_value_entry(&mut pool, &header, &kv);
+
+        let index_address = header.get_index_offset(kv.key);
+        let kv_address = get_kv_address(&mut pool, &header, &kv);
+        let value_size = (kv.size - KEY_VALUE_MIN_SIZE_IN_BYTES - kv.key_size) as usize;
+        let value_address = kv_address + KEY_VALUE_MIN_SIZE_IN_BYTES as u64 + kv.key_size as u64;
+
+        assert_eq!(
+            pool.read_at(index_address, INDEX_ENTRY_SIZE_IN_BYTES as usize)
+                .expect("read_at for index")[..],
+            kv_address.to_be_bytes()
+        );
+        assert_eq!(
+            pool.read_at(value_address, value_size)
+                .expect("read_at for index")[..],
+            kv.value[..]
+        );
+
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
     }
 
     #[test]
     #[serial]
     fn read_at_works_out_of_bounds() {
-        todo!()
+        let file_name = "testdb.scdb";
+        let kv = KeyValueEntry::new(&b"kv"[..], &b"bar"[..], 0);
+        let mut pool = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
+
+        let mut file = acquire_lock!(pool.file).expect("acquire lock on file");
+        let header = DbFileHeader::from_file(&mut file).expect("get header");
+        drop(file);
+
+        insert_key_value_entry(&mut pool, &header, &kv);
+
+        let index_address = header.get_index_offset(kv.key);
+        let kv_address = get_kv_address(&mut pool, &header, &kv);
+        let value_address = kv_address + KEY_VALUE_MIN_SIZE_IN_BYTES as u64 + kv.key_size as u64;
+        let file_size = get_actual_file_size(file_name);
+
+        let test_data = vec![
+            (index_address, file_size as usize),
+            (value_address, file_size as usize),
+            (file_size, 0),
+            (file_size, kv.key_size as usize),
+        ];
+
+        for (addr, size) in test_data {
+            assert!(pool.read_at(addr, size).is_err());
+        }
+
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
     }
 
     /// Returns the actual file size of the file at the given path
