@@ -230,6 +230,10 @@ impl BufferPool {
     /// Otherwise, it returns None
     /// This is to handle hash collisions.
     pub(crate) fn get_value(&mut self, address: u64, key: &[u8]) -> io::Result<Option<Value>> {
+        if address == 0 {
+            return Ok(None);
+        }
+
         let mut buffers = acquire_lock!(self.buffers)?;
 
         // loop in reverse, starting at the back
@@ -254,7 +258,7 @@ impl BufferPool {
 
         let entry: KeyValueEntry = KeyValueEntry::from_data_array(&buf, 0)?;
 
-        let value = if entry.key == key {
+        let value = if entry.key == key && !entry.is_expired() {
             Some(Value::from(&entry))
         } else {
             None
@@ -821,31 +825,145 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn get_value_works() {
-        todo!()
+        let file_name = "testdb.scdb";
+        let kv = KeyValueEntry::new(&b"kv"[..], &b"bar"[..], 0);
+        let mut pool = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
+
+        let mut file = acquire_lock!(pool.file).expect("acquire lock on file");
+        let header = DbFileHeader::from_file(&mut file).expect("get header");
+        drop(file);
+
+        insert_key_value_entry(&mut pool, &header, &kv);
+
+        let kv_address = get_kv_address(&mut pool, &header, &kv);
+        let got = pool
+            .get_value(kv_address, kv.key)
+            .expect("get value")
+            .unwrap();
+        let expected = Value::from(&kv);
+
+        assert_eq!(got, expected);
+
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
     }
 
     #[test]
-    fn get_value_out_of_bounds() {
-        todo!()
+    #[serial]
+    fn get_value_from_buffer() {
+        let file_name = "testdb.scdb";
+        let kv = KeyValueEntry::new(&b"kv"[..], &b"bar"[..], 0);
+        let mut pool = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
+
+        let mut file = acquire_lock!(pool.file).expect("acquire lock on file");
+        let header = DbFileHeader::from_file(&mut file).expect("get header");
+        drop(file);
+
+        insert_key_value_entry(&mut pool, &header, &kv);
+
+        let kv_address = get_kv_address(&mut pool, &header, &kv);
+
+        let _ = pool
+            .get_value(kv_address, kv.key)
+            .expect("get value first time")
+            .unwrap();
+
+        // delete underlying file first
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
+
+        // the second get must be getting value from memory
+        let got = pool
+            .get_value(kv_address, kv.key)
+            .expect("get value second time")
+            .unwrap();
+
+        let expected = Value::from(&kv);
+
+        assert_eq!(got, expected);
     }
 
     #[test]
+    #[serial]
+    fn get_value_expired() {
+        let file_name = "testdb.scdb";
+        // 1666023836u64 is some past timestamp in October 2022 so this is expired
+        let kv = KeyValueEntry::new(&b"expires"[..], &b"bar"[..], 1666023836u64);
+        let mut pool = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
+
+        let mut file = acquire_lock!(pool.file).expect("acquire lock on file");
+        let header = DbFileHeader::from_file(&mut file).expect("get header");
+        drop(file);
+
+        insert_key_value_entry(&mut pool, &header, &kv);
+
+        let kv_address = get_kv_address(&mut pool, &header, &kv);
+        let got = pool.get_value(kv_address, kv.key).expect("get value");
+
+        assert!(got.is_none());
+
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
+    }
+
+    #[test]
+    #[serial]
+    fn get_value_deleted() {
+        let file_name = "testdb.scdb";
+        let kv = KeyValueEntry::new(&b"deleted"[..], &b"bar"[..], 0);
+        let mut pool = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
+
+        let mut file = acquire_lock!(pool.file).expect("acquire lock on file");
+        let header = DbFileHeader::from_file(&mut file).expect("get header");
+        drop(file);
+
+        insert_key_value_entry(&mut pool, &header, &kv);
+        delete_key_value(&mut pool, &header, &kv);
+
+        let kv_address = get_kv_address(&mut pool, &header, &kv);
+        assert_eq!(kv_address, 0u64);
+
+        let got = pool.get_value(kv_address, kv.key).expect("get value");
+        assert!(got.is_none());
+
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
+    }
+
+    #[test]
+    #[serial]
     fn addr_belongs_to_key_works() {
         todo!()
     }
 
     #[test]
+    #[serial]
+    fn addr_belongs_to_key_deleted() {
+        todo!()
+    }
+
+    #[test]
+    #[serial]
+    fn addr_belongs_to_key_expired() {
+        todo!()
+    }
+
+    #[test]
+    #[serial]
     fn addr_belongs_to_key_works_out_of_bounds() {
         todo!()
     }
 
     #[test]
+    #[serial]
     fn read_at_works() {
         todo!()
     }
 
     #[test]
+    #[serial]
     fn read_at_works_out_of_bounds() {
         todo!()
     }
@@ -942,5 +1060,19 @@ mod tests {
         } else {
             false
         }
+    }
+
+    /// Returns the address for the given key value entry within the buffer pool
+    fn get_kv_address(pool: &mut BufferPool, header: &DbFileHeader, kv: &KeyValueEntry) -> u64 {
+        let mut kv_address = vec![0u8; INDEX_ENTRY_SIZE_IN_BYTES as usize];
+        let index_address = header.get_index_offset(kv.key);
+
+        let mut file = acquire_lock!(pool.file).expect("acquire lock on file");
+        file.seek(SeekFrom::Start(index_address))
+            .expect("seek to index");
+        file.read(&mut kv_address)
+            .expect("reads value at index address");
+
+        u64::from_be_bytes(slice_to_array(&kv_address[..]).expect("slice to array"))
     }
 }
