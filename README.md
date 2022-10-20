@@ -61,7 +61,9 @@ Here are those that have been developed:
 - [x] Add tests for internal::buffers::Value
 - [x] Add tests for internal::buffers::BufferPool
 - [x] Add tests for store::Store
-- [ ] Add GitHub actions for CI/CD
+- [ ] Add examples
+- [x] Add GitHub actions for CI
+- [ ] Add GitHub actions for CD
 - [ ] Add package documentation
 - [ ] Add benchmarks
 - [ ] compare benchmarks with those of redis, sqlite, lmdb etc.
@@ -75,6 +77,12 @@ Here are those that have been developed:
 
   ```bash
   git clone https://github.com/sopherapps/scdb.git && cd scdb
+  ```
+
+- Lint
+
+  ```shell
+  cargo clippy
   ```
 
 - Run the test command
