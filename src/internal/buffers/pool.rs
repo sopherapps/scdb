@@ -1,5 +1,6 @@
 use crate::internal::buffers::buffer::{Buffer, Value};
 use crate::internal::entries::db_file_header::HEADER_SIZE_IN_BYTES;
+use crate::internal::entries::index::Index;
 use crate::internal::utils::get_vm_page_size;
 use crate::internal::{
     acquire_lock, slice_to_array, DbFileHeader, KeyValueEntry, INDEX_ENTRY_SIZE_IN_BYTES,
@@ -361,13 +362,18 @@ impl PartialEq for BufferPool {
 fn get_kv_bytes(file: &Mutex<File>, address: &[u8]) -> io::Result<Vec<u8>> {
     let mut file = acquire_lock!(file)?;
     let address = u64::from_be_bytes(slice_to_array(address)?);
-    file.seek(SeekFrom::Start(address))?;
+
+    // get size of the whole key value entry
     let mut size_bytes: [u8; 4] = [0; 4];
+    file.seek(SeekFrom::Start(address))?;
     file.read(&mut size_bytes)?;
     let size = u32::from_be_bytes(size_bytes);
+
+    // get the key value entry itself, basing on the size it has
     let mut data = vec![0u8; size as usize];
     file.seek(SeekFrom::Start(address))?;
     file.read(&mut data)?;
+
     Ok(data)
 }
 
@@ -390,52 +396,6 @@ fn initialize_db_file(file: &mut File, header: &DbFileHeader) -> io::Result<u64>
     file.set_len(size)?;
 
     Ok(size)
-}
-
-struct Index<'a> {
-    num_of_blocks: u64,
-    block_size: u64,
-    file: &'a Mutex<File>,
-    cursor: u64,
-}
-
-impl<'a> Index<'a> {
-    /// Creates a new index instance
-    fn new(file: &'a Mutex<File>, header: &DbFileHeader) -> Self {
-        Self {
-            num_of_blocks: header.number_of_index_blocks,
-            block_size: header.net_block_size,
-            file,
-            cursor: 0,
-        }
-    }
-}
-
-impl<'a> Iterator for &mut Index<'a> {
-    type Item = io::Result<Vec<u8>>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.cursor >= self.num_of_blocks {
-            return None;
-        }
-
-        let mut file = match self.file.lock() {
-            Ok(v) => v,
-            Err(e) => return Some(Err(io::Error::new(io::ErrorKind::Other, e.to_string()))),
-        };
-
-        let mut data = vec![0u8; self.block_size as usize];
-        if let Err(e) = file.seek(SeekFrom::Start(100 + (self.cursor * self.block_size))) {
-            return Some(Err(e));
-        }
-
-        self.cursor += 1;
-
-        match file.read(&mut data) {
-            Ok(_) => Some(Ok(data)),
-            Err(e) => Some(Err(e)),
-        }
-    }
 }
 
 #[cfg(test)]
