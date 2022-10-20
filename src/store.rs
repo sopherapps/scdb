@@ -525,6 +525,9 @@ mod tests {
         assert_list_eq!(&expected_unchanged_values, &received_unchanged_values);
         assert_list_eq!(&expected_expired_values, &received_removed_values);
 
+        // ensure background tasks stop running
+        drop(store);
+
         fs::remove_dir_all(STORE_PATH).expect("delete store folder");
     }
 
