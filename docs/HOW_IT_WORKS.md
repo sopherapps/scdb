@@ -127,19 +127,19 @@ No read, nor write would be allowed. It can also be requested for by the user.
 
 1. Create new file
 2. Copy header into the new file
-3. Copy index into new file
-4. Read index_map into a map of <entry_offset, index_offset>
-5. scan key-value entries until offset is greater or equal to `file_size`
-    - if key-value offset does not exist in index_map, do nothing
-    - else copy that key-value entry to the new file,
-        - get the index_offset of that key-value entry from index_map and update new file's index with the new offset
-        - get the next offset by adding current offset to key-value entry's size
-        - seek to that offset and do the necessary
-6. Clear the buffers
-7. Update file_size to the new file's file size
-8. Point the buffer pool's file to that new file
-9. Delete the old file
-10. Rename the new file to the old file's name
+3. Copy index into new file. This done index block by block.
+4. In each index block, find any non-zero index entries. For each of these:
+    - if the entry has not yet expired
+        - append that key-value entry to the new file,
+        - update the index for that entry in the new file.
+          The index being the offset where it was appended (i.e. bottom of file)
+    - else
+        - update the index for that entry in the new file to be 0 (zero)
+5. Clear the buffers
+6. Update file_size to the new file's file size
+7. Point the buffer pool's file to that new file
+8. Delete the old file
+9. Rename the new file to the old file's name
 
 ##### Performance
 
