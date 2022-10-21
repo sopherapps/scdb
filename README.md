@@ -201,7 +201,7 @@ Here are those that have been developed:
 - [x] Add GitHub actions for CI
 - [ ] Add GitHub actions for CD
 - [ ] Add package documentation
-- [ ] Add benchmarks
+- [x] Add benchmarks
 - [ ] compare benchmarks with those of redis, sqlite, lmdb etc.
 - [ ] Release version 0.0.1
 
@@ -238,6 +238,40 @@ Here are those that have been developed:
   ```shell
   cargo bench
   ```
+
+## Benchmarks
+
+On an average PC.
+
+``` 
+set hey English         time:   [8.5579 µs 8.8651 µs 9.2869 µs]
+set hi English          time:   [8.9910 µs 9.2078 µs 9.4178 µs]
+set salut French        time:   [8.3445 µs 8.4464 µs 8.5833 µs]
+set bonjour French      time:   [8.5272 µs 9.2526 µs 10.390 µs]
+set hola Spanish        time:   [8.6436 µs 8.7883 µs 8.9293 µs]
+set oi Portuguese       time:   [8.3137 µs 8.3417 µs 8.3748 µs]
+set mulimuta Runyoro    time:   [8.5637 µs 9.5325 µs 11.405 µs]
+update hey to Jane      time:   [8.1118 µs 8.1418 µs 8.1783 µs]
+update hi to John       time:   [8.2344 µs 8.3807 µs 8.5535 µs]
+update hola to Santos   time:   [7.9515 µs 7.9737 µs 7.9987 µs]
+update oi to Ronaldo    time:   [8.2246 µs 8.4674 µs 8.9055 µs]
+update mulimuta to Aliguma
+                        time:   [8.2345 µs 8.3155 µs 8.4050 µs]
+get hey                 time:   [336.27 ns 341.33 ns 346.51 ns]
+get hi                  time:   [308.28 ns 311.16 ns 314.05 ns]
+get salut               time:   [305.79 ns 308.40 ns 311.19 ns]
+get bonjour             time:   [321.73 ns 333.02 ns 346.78 ns]
+get hola                time:   [334.54 ns 339.33 ns 345.17 ns]
+get oi                  time:   [304.89 ns 307.61 ns 310.54 ns]
+get mulimuta            time:   [309.96 ns 313.19 ns 316.56 ns]
+delete hey              time:   [4.0609 ms 4.0777 ms 4.0944 ms]
+delete hi               time:   [3.9960 ms 4.0045 ms 4.0139 ms]
+delete salut            time:   [4.0050 ms 4.0130 ms 4.0210 ms]
+delete bonjour          time:   [3.9819 ms 3.9899 ms 3.9983 ms]
+delete hola             time:   [3.9979 ms 4.0055 ms 4.0139 ms]
+delete oi               time:   [4.0279 ms 4.1111 ms 4.2306 ms]
+delete mulimuta         time:   [4.1237 ms 4.1983 ms 4.2861 ms]
+```
 
 ## Acknowledgement
 
