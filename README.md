@@ -1,5 +1,7 @@
 # scdb
 
+![CI](https://github.com/sopherapps/scdb/actions/workflows/ci.yml/badge.svg)
+
 A very simple and fast key-value store but persisting data to disk, with a "localStorage-like" API.
 
 **scdb is not yet production ready. It is not even working yet!!. It is still being heavily developed and its API (and
