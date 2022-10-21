@@ -80,13 +80,6 @@ Of course to make it a little more appealing, it has some extra features like:
           ("oi", "Portuguese"),
           ("mulimuta", "Runyoro"),
       ];
-      let updates = [
-          ("hey", "Jane"),
-          ("hi", "John"),
-          ("hola", "Santos"),
-          ("oi", "Ronaldo"),
-          ("mulimuta", "Aliguma"),
-      ];
       let keys: Vec<&str> = records.iter().map(|(k, _)| *k).collect();
   
       // Setting the values
@@ -118,6 +111,13 @@ Of course to make it a little more appealing, it has some extra features like:
       pprint_data!("After inserting keys with ttl", &data);
   
       // Updating the values
+      let updates = [
+          ("hey", "Jane"),
+          ("hi", "John"),
+          ("hola", "Santos"),
+          ("oi", "Ronaldo"),
+          ("mulimuta", "Aliguma"),
+      ];
       println!("\n\nLet's update with data {:?}]...", &updates);
       for (k, v) in &updates {
           let _ = store.set(k.as_bytes(), v.as_bytes(), None);
