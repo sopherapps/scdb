@@ -100,7 +100,7 @@ impl Buffer {
 
     /// Reads an arbitrary array at the given address and of given size and returns it
     #[inline]
-    pub(crate) fn read_at(&mut self, address: u64, size: usize) -> io::Result<Vec<u8>> {
+    pub(crate) fn read_at(&self, address: u64, size: usize) -> io::Result<Vec<u8>> {
         self.validate_bounds(address, address + size as u64)?;
         let offset = (address - self.left_offset) as usize;
         let data_array = self.data[offset..offset + size].to_vec();
@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn buffer_read_at() {
-        let mut buf = Buffer::new(
+        let buf = Buffer::new(
             79,
             &[72, 97, 108, 108, 101, 108, 117, 106, 97, 104],
             CAPACITY,
@@ -343,7 +343,7 @@ mod tests {
 
     #[test]
     fn buffer_read_at_out_of_bounds() {
-        let mut buf = Buffer::new(
+        let buf = Buffer::new(
             79,
             &[72, 97, 108, 108, 101, 108, 117, 106, 97, 104],
             CAPACITY,

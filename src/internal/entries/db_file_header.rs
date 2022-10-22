@@ -20,10 +20,14 @@ pub(crate) struct DbFileHeader {
 
 impl DbFileHeader {
     /// Creates a new DbFileHeader
-    pub(crate) fn new(max_keys: Option<u64>, redundant_blocks: Option<u16>) -> Self {
+    pub(crate) fn new(
+        max_keys: Option<u64>,
+        redundant_blocks: Option<u16>,
+        block_size: Option<u32>,
+    ) -> Self {
         let max_keys = max_keys.unwrap_or(1_000_000);
         let redundant_blocks = redundant_blocks.unwrap_or(1);
-        let block_size = utils::get_vm_page_size();
+        let block_size = block_size.unwrap_or_else(|| utils::get_vm_page_size());
         let mut header = Self {
             title: "Scdb versn 0.001".to_string(),
             block_size,
@@ -179,7 +183,7 @@ mod tests {
         ];
 
         for (max_keys, redundant_blocks, expected) in test_table {
-            let got = DbFileHeader::new(max_keys, redundant_blocks);
+            let got = DbFileHeader::new(max_keys, redundant_blocks, None);
             assert_eq!(&got, &expected);
         }
     }
@@ -246,7 +250,7 @@ mod tests {
         ];
 
         for (max_keys, redundant_blocks, expected) in test_table {
-            let got = DbFileHeader::new(max_keys, redundant_blocks).as_bytes();
+            let got = DbFileHeader::new(max_keys, redundant_blocks, None).as_bytes();
             assert_eq!(&got, &expected);
         }
     }
@@ -510,7 +514,7 @@ mod tests {
     #[test]
     #[serial]
     fn db_file_header_get_index_offset() {
-        let db_header = DbFileHeader::new(None, None);
+        let db_header = DbFileHeader::new(None, None, None);
         let offset = db_header.get_index_offset(b"foo");
         let block_1_start = HEADER_SIZE_IN_BYTES;
         let block_1_end = db_header.net_block_size + block_1_start;
@@ -520,7 +524,7 @@ mod tests {
     #[test]
     #[serial]
     fn db_file_header_get_index_offset_in_nth_block() {
-        let db_header = DbFileHeader::new(None, None);
+        let db_header = DbFileHeader::new(None, None, None);
         let initial_offset = db_header.get_index_offset(b"foo");
         let num_of_blocks = db_header.number_of_index_blocks;
         for i in 0..num_of_blocks {
@@ -536,7 +540,7 @@ mod tests {
     #[test]
     #[serial]
     fn db_file_header_get_index_offset_in_nth_block_out_of_bounds() {
-        let db_header = DbFileHeader::new(None, None);
+        let db_header = DbFileHeader::new(None, None, None);
         let initial_offset = db_header.get_index_offset(b"foo");
         let num_of_blocks = db_header.number_of_index_blocks;
 
