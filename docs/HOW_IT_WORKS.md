@@ -167,3 +167,26 @@ Clear the entire database.
   file before
   compaction.
 - Auxiliary space: This operation is O(km) where k is the `number_of_index_blocks` and m is the `block_size`.
+
+### Optimizations
+
+- #### Index Cache Misses
+  The BufferPool's buffers can be split up into two kinds; index buffers and key-value buffers.
+  This is to deal with the multiple cache misses we keep having (very evident in the delete-benchmarks).
+  We need to have at least the index first block always cached. This has the following consequences.
+    - The index buffers are to be stored in a btree map so as to be able to expel any buffers that have a higher
+      left-offset first
+    - The total capacity of the buffer pool will be split up at a 2:3 ratio for index:key-value buffers.
+    - The index buffer capacity will be capped to the number of index blocks such that
+      if the 2:3 ratio produces an index buffer capacity higher than the total number of index blocks, we increase the
+      key-value buffer capacity by the difference between `total number of index blocks` and the
+      computed `index buffer capacity`. This avoids waste.
+    - methods like `read_at` which could use either the index or the key-value buffers will specify what buffer type
+      they are interested in i.e. index or key-value.
+
+- #### Index Memory Hoarding
+  The index can take up a lot of space in memory - so much so that updating it has to be done incrementally directly
+  on disk.
+  We need to use different lengths of byte arrays depending on the entry offset they hold. This is hard considering
+  the fact that hashing requires that the number of elements per block be the same always.
+    - To be investigated further
