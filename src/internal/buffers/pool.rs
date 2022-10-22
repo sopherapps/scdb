@@ -1,7 +1,6 @@
 use crate::internal::buffers::buffer::{Buffer, Value};
 use crate::internal::entries::db_file_header::HEADER_SIZE_IN_BYTES;
 use crate::internal::entries::index::Index;
-use crate::internal::entries::key_value::KEY_VALUE_MIN_SIZE_IN_BYTES;
 use crate::internal::utils::get_vm_page_size;
 use crate::internal::{
     acquire_lock, slice_to_array, DbFileHeader, KeyValueEntry, INDEX_ENTRY_SIZE_IN_BYTES,
@@ -125,7 +124,9 @@ impl BufferPool {
         for buf in buffers.iter_mut().rev() {
             if buf.contains(address) {
                 buf.replace(address, data.to_vec())?;
-                break;
+                file.seek(SeekFrom::Start(address))?;
+                file.write_all(data)?;
+                return Ok(());
             }
         }
 
@@ -293,13 +294,26 @@ impl BufferPool {
             }
         }
 
-        let key_size = key.len();
-        let mut buf: Vec<u8> = vec![0; KEY_VALUE_MIN_SIZE_IN_BYTES as usize + key_size];
+        if buffers.len() >= self.capacity {
+            buffers.pop_front();
+        }
+
+        let mut buf: Vec<u8> = vec![0; self.buffer_size];
         let mut file = acquire_lock!(self.file)?;
         file.seek(SeekFrom::Start(kv_address))?;
-        file.read_exact(&mut buf)?;
+        let bytes_read = file.read(&mut buf)?;
 
-        KeyValueEntry::has_key(&buf, key)
+        // update buffers only upto actual data read (cater for partially filled buffer)
+        buffers.push_back(Buffer::new(
+            kv_address,
+            &buf[..bytes_read],
+            self.buffer_size,
+        ));
+
+        let entry: KeyValueEntry = KeyValueEntry::from_data_array(&buf, 0)?;
+
+        let value = entry.key == key;
+        Ok(value)
     }
 
     /// Reads an arbitrary array at the given address and of given size and returns it
@@ -317,12 +331,20 @@ impl BufferPool {
             }
         }
 
-        let mut buf: Vec<u8> = vec![0; size];
+        if buffers.len() >= self.capacity {
+            buffers.pop_front();
+        }
+
+        let mut buf: Vec<u8> = vec![0; self.buffer_size];
         let mut file = acquire_lock!(self.file)?;
         file.seek(SeekFrom::Start(address))?;
-        file.read_exact(&mut buf)?;
+        let bytes_read = file.read(&mut buf)?;
 
-        Ok(buf)
+        // update buffers only upto actual data read (cater for partially filled buffer)
+        buffers.push_back(Buffer::new(address, &buf[..bytes_read], self.buffer_size));
+
+        let data_array = buf[0..size].to_vec();
+        Ok(data_array)
     }
 
     /// Checks if the given range is within bounds for this buffer

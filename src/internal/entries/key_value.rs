@@ -66,22 +66,6 @@ impl<'a> KeyValueEntry<'a> {
         Ok(entry)
     }
 
-    /// Checks if given byte array has the given key
-    pub(crate) fn has_key(data: &'a [u8], key: &'a [u8]) -> io::Result<bool> {
-        let data_len = data.len();
-
-        let key_size_slice = safe_slice!(data, 4, 8, data_len)?;
-        let key_size = u32::from_be_bytes(internal::slice_to_array(key_size_slice)?);
-
-        let k_size = key_size as usize;
-        if k_size == key.len() {
-            let key_in_data = safe_slice!(data, 8, 8 + k_size, data_len)?;
-            Ok(key == key_in_data)
-        } else {
-            Ok(false)
-        }
-    }
-
     /// Retrieves the byte array that represents the key value entry.
     pub(crate) fn as_bytes(&self) -> Vec<u8> {
         self.size
