@@ -8,7 +8,7 @@ use clokwerk::{ScheduleHandle, Scheduler, TimeUnits};
 
 use crate::internal::{
     acquire_lock, get_current_timestamp, initialize_db_folder, slice_to_array, BufferPool,
-    DbFileHeader, KeyValueEntry, INDEX_ENTRY_SIZE_IN_BYTES,
+    DbFileHeader, KeyValueEntry,
 };
 
 const DEFAULT_DB_FILE: &str = "dump.scdb";
@@ -69,15 +69,14 @@ impl Store {
             let index_offset = self
                 .header
                 .get_index_offset_in_nth_block(index_offset, index_block)?;
-            let kv_offset_in_bytes =
-                buffer_pool.read_at(index_offset, INDEX_ENTRY_SIZE_IN_BYTES as usize)?;
+            let kv_offset_in_bytes = buffer_pool.read_index(index_offset)?;
             let entry_offset = u64::from_be_bytes(slice_to_array(&kv_offset_in_bytes)?);
 
             if entry_offset == 0 || buffer_pool.addr_belongs_to_key(entry_offset, k)? {
                 let kv = KeyValueEntry::new(k, v, expiry);
                 let mut kv_bytes = kv.as_bytes();
                 let prev_last_offset = buffer_pool.append(&mut kv_bytes)?;
-                buffer_pool.replace(index_offset, &prev_last_offset.to_be_bytes())?;
+                buffer_pool.update_index(index_offset, &prev_last_offset.to_be_bytes())?;
                 return Ok(());
             }
 
@@ -100,8 +99,7 @@ impl Store {
             let index_offset = self
                 .header
                 .get_index_offset_in_nth_block(index_offset, index_block)?;
-            let kv_offset_in_bytes =
-                buffer_pool.read_at(index_offset, INDEX_ENTRY_SIZE_IN_BYTES as usize)?;
+            let kv_offset_in_bytes = buffer_pool.read_index(index_offset)?;
             let entry_offset = u64::from_be_bytes(slice_to_array(&kv_offset_in_bytes)?);
 
             if entry_offset != 0 {
@@ -109,7 +107,7 @@ impl Store {
                     let value = match v.is_expired {
                         true => {
                             // erase the index
-                            buffer_pool.replace(index_offset, &0u64.to_be_bytes())?;
+                            buffer_pool.update_index(index_offset, &0u64.to_be_bytes())?;
                             None
                         }
                         false => Some(v.data),
@@ -134,13 +132,12 @@ impl Store {
             let index_offset = self
                 .header
                 .get_index_offset_in_nth_block(index_offset, index_block)?;
-            let kv_offset_in_bytes =
-                buffer_pool.read_at(index_offset, INDEX_ENTRY_SIZE_IN_BYTES as usize)?;
+            let kv_offset_in_bytes = buffer_pool.read_index(index_offset)?;
             let entry_offset = u64::from_be_bytes(slice_to_array(&kv_offset_in_bytes)?);
 
             if entry_offset != 0 && buffer_pool.addr_belongs_to_key(entry_offset, k)? {
                 // erase the index
-                buffer_pool.replace(index_offset, &0u64.to_be_bytes())?;
+                buffer_pool.update_index(index_offset, &0u64.to_be_bytes())?;
 
                 return Ok(());
             }
