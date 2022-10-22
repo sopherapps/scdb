@@ -27,7 +27,7 @@ impl DbFileHeader {
     ) -> Self {
         let max_keys = max_keys.unwrap_or(1_000_000);
         let redundant_blocks = redundant_blocks.unwrap_or(1);
-        let block_size = block_size.unwrap_or_else(|| utils::get_vm_page_size());
+        let block_size = block_size.unwrap_or_else(utils::get_vm_page_size);
         let mut header = Self {
             title: "Scdb versn 0.001".to_string(),
             block_size,
