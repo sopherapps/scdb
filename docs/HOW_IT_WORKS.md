@@ -154,19 +154,17 @@ No read, nor write would be allowed. It can also be requested for by the user.
 
 Clear the entire database.
 
-1. Create new file
-2. Copy header into the new file and reset file_size
-3. Add an empty index to the file
-4. Clear the buffers
-5. Delete the old file
-6. Rename the new file to the old file's name
+1. Initialize a new header basing on the old settings
+2. Write the new header into the file
+3. Shrink the file to the size of the header
+4. Expand the file to the expected size of file if it had headers and index blocks. This fills any gaps with 0s.
 
 ##### Performance
 
 - Time complexity: This operation is O(1) where k is the `number_of_index_blocks` and N is the number of keys in the
   file before
   compaction.
-- Auxiliary space: This operation is O(km) where k is the `number_of_index_blocks` and m is the `block_size`.
+- Auxiliary space: This operation is O(m) where m is the size of the header i.e. 100.
 
 ### Optimizations
 
