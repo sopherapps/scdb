@@ -1,8 +1,9 @@
 use crate::internal::buffers::buffer::{Buffer, Value};
 use crate::internal::entries::db_file_header::HEADER_SIZE_IN_BYTES;
 use crate::internal::entries::index::Index;
+use crate::internal::entries::key_value::KEY_VALUE_MIN_SIZE_IN_BYTES;
 use crate::internal::macros::validate_bounds;
-use crate::internal::utils::get_vm_page_size;
+use crate::internal::utils::{get_vm_page_size, TRUE_AS_BYTE};
 use crate::internal::{
     acquire_lock, slice_to_array, DbFileHeader, KeyValueEntry, INDEX_ENTRY_SIZE_IN_BYTES,
 };
@@ -37,6 +38,8 @@ pub(crate) struct BufferPool {
     pub(crate) file_path: PathBuf,
     pub(crate) file_size: Mutex<u64>,
 }
+
+const OFFSET_FOR_KEY_IN_KV_ARRAY: usize = 8;
 
 impl BufferPool {
     /// Creates a new BufferPool with the given `capacity` number of Buffers and
@@ -204,7 +207,7 @@ impl BufferPool {
                 if idx_bytes != zero {
                     let kv_byte_array = get_kv_bytes(&self.file, &idx_bytes)?;
                     let kv = KeyValueEntry::from_data_array(&kv_byte_array, 0)?;
-                    if !kv.is_expired() {
+                    if !kv.is_expired() && !kv.is_deleted {
                         let kv_size = kv_byte_array.len() as u64;
                         // insert key value
                         new_file.seek(SeekFrom::Start(new_file_offset))?;
@@ -215,7 +218,7 @@ impl BufferPool {
                         new_file.write_all(&new_file_offset.to_be_bytes())?;
                         new_file_offset += kv_size;
                     } else {
-                        // if expired, update index to zero
+                        // if expired or deleted, update index to zero
                         new_file.seek(SeekFrom::Start(idx_offset))?;
                         new_file.write_all(&zero)?;
                     }
@@ -283,6 +286,38 @@ impl BufferPool {
         Ok(value)
     }
 
+    /// Attempts to delete the key-value entry for the given kv_address as long as the key it holds
+    /// is the same as the key provided
+    pub(crate) fn try_delete_kv_entry(
+        &mut self,
+        kv_address: u64,
+        key: &[u8],
+    ) -> io::Result<Option<()>> {
+        let key_size = key.len();
+        let addr_for_is_deleted = kv_address + 8 + key_size as u64;
+        let mut kv_buffers = acquire_lock!(self.kv_buffers)?;
+        // loop in reverse, starting at the back
+        // since the latest kv_buffers are the ones updated when new changes occur
+        for buf in kv_buffers.iter_mut().rev() {
+            if buf.contains(kv_address) && buf.try_delete_kv_entry(kv_address, key)?.is_some() {
+                let mut file = acquire_lock!(self.file)?;
+                file.seek(SeekFrom::Start(addr_for_is_deleted))?;
+                file.write_all(&[TRUE_AS_BYTE])?;
+                return Ok(Some(()));
+            }
+        }
+
+        let mut file = acquire_lock!(self.file)?;
+        let key_in_data = extract_key_as_byte_array_from_file(&mut file, kv_address, key_size)?;
+        if key_in_data == key {
+            file.seek(SeekFrom::Start(addr_for_is_deleted))?;
+            file.write_all(&[TRUE_AS_BYTE])?;
+            Ok(Some(()))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Checks to see if the given kv address is for the given key.
     /// Note that this returns true for expired keys as long as compaction has not yet been done.
     /// This avoids duplicate entries for the same key being tracked in separate index entries
@@ -320,9 +355,8 @@ impl BufferPool {
             self.buffer_size,
         ));
 
-        let entry: KeyValueEntry = KeyValueEntry::from_data_array(&buf, 0)?;
-
-        let value = entry.key == key;
+        let key_in_file = &buf[OFFSET_FOR_KEY_IN_KV_ARRAY..OFFSET_FOR_KEY_IN_KV_ARRAY + key.len()];
+        let value = key_in_file == key;
         Ok(value)
     }
 
@@ -395,6 +429,20 @@ impl PartialEq for BufferPool {
             && *kv_buffers == *other_kv_buffers
             && *index_buffers == *other_index_buffers
     }
+}
+
+/// Extracts the byte array for the key from a given file
+fn extract_key_as_byte_array_from_file(
+    file: &mut File,
+    kv_address: u64,
+    key_size: usize,
+) -> io::Result<Vec<u8>> {
+    let buf_size = KEY_VALUE_MIN_SIZE_IN_BYTES as usize + key_size;
+    let mut buf: Vec<u8> = vec![0; buf_size];
+    file.seek(SeekFrom::Start(kv_address))?;
+    file.read_exact(&mut buf)?;
+    let key = buf[OFFSET_FOR_KEY_IN_KV_ARRAY..OFFSET_FOR_KEY_IN_KV_ARRAY + key_size].to_vec();
+    Ok(key)
 }
 
 /// Computes the capacity (i.e. number of buffers) of the buffers to be set aside for index buffers
@@ -1045,6 +1093,51 @@ mod tests {
         assert!(!pool
             .addr_belongs_to_key(file_size, kv.key)
             .expect("addr_belongs_to_key kv"));
+
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
+    }
+
+    #[test]
+    #[serial]
+    fn try_delete_kv_entry_works() {
+        let file_name = "testdb.scdb";
+        let kv1 = KeyValueEntry::new(&b"never"[..], &b"bar"[..], 0);
+        let kv2 = KeyValueEntry::new(&b"foo"[..], &b"baracuda"[..], 0);
+        let mut pool = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
+
+        let mut file = acquire_lock!(pool.file).expect("acquire lock on file");
+        let header = DbFileHeader::from_file(&mut file).expect("get header");
+        drop(file);
+
+        insert_key_value_entry(&mut pool, &header, &kv1);
+        insert_key_value_entry(&mut pool, &header, &kv2);
+
+        let kv1_index_address = get_kv_address(&mut pool, &header, &kv1);
+
+        let resp = pool
+            .try_delete_kv_entry(kv1_index_address, &kv2.key)
+            .expect("try delete kv1 with kv2 key");
+        assert!(resp.is_none());
+        assert_eq!(
+            pool.get_value(kv1_index_address, &kv1.key).unwrap(),
+            Some(Value {
+                data: vec![98u8, 97, 114],
+                is_stale: false,
+            })
+        );
+
+        let resp = pool
+            .try_delete_kv_entry(kv1_index_address, &kv1.key)
+            .expect("try delete kv1 with kv2 key");
+        assert!(resp.is_some());
+        assert_eq!(
+            pool.get_value(kv1_index_address, &kv1.key).unwrap(),
+            Some(Value {
+                data: vec![98u8, 97, 114],
+                is_stale: true,
+            })
+        );
 
         fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
     }

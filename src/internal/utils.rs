@@ -4,6 +4,9 @@ use std::mem;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub(crate) const TRUE_AS_BYTE: u8 = 1;
+pub(crate) const FALSE_AS_BYTE: u8 = 0;
+
 #[cfg(windows)]
 use winapi::um::sysinfoapi::{GetSystemInfo, LPSYSTEM_INFO, SYSTEM_INFO};
 
@@ -44,6 +47,22 @@ pub(crate) fn initialize_db_folder(store_path: &Path) -> io::Result<()> {
 pub(crate) fn slice_to_array<const N: usize>(data: &[u8]) -> io::Result<[u8; N]> {
     data.try_into()
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+}
+
+/// Converts a byte array into a boolean
+#[inline]
+pub(crate) fn byte_array_to_bool(data: &[u8]) -> bool {
+    data == [TRUE_AS_BYTE]
+}
+
+/// Converts a boolean into a byte array
+#[inline]
+pub(crate) fn bool_to_byte_array(value: bool) -> &'static [u8; 1] {
+    if value {
+        &[TRUE_AS_BYTE]
+    } else {
+        &[FALSE_AS_BYTE]
+    }
 }
 
 #[cfg(test)]
@@ -90,5 +109,19 @@ mod tests {
             "got = {:?}, expected = {:?}",
             &got, &expected
         );
+    }
+
+    #[test]
+    fn byte_array_to_bool_works() {
+        let test_data: [(&[u8], bool); 4] = [
+            (&[1][..], true),
+            (&[0][..], false),
+            (&[1, 1][..], false),
+            (&[0, 0, 0, 1, 0, 1][..], false),
+        ];
+
+        for (arr, expected) in test_data {
+            assert_eq!(byte_array_to_bool(arr), expected);
+        }
     }
 }
