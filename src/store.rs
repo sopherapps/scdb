@@ -1,5 +1,4 @@
 use std::io;
-use std::ops::DerefMut;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -33,7 +32,7 @@ impl Store {
 
         initialize_db_folder(db_folder)?;
 
-        let buffer_pool = BufferPool::new(
+        let mut buffer_pool = BufferPool::new(
             pool_capacity,
             &db_file_path,
             max_keys,
@@ -41,7 +40,7 @@ impl Store {
             None,
         )?;
 
-        let header = extract_header_from_buffer_pool(&buffer_pool)?;
+        let header = extract_header_from_buffer_pool(&mut buffer_pool)?;
         let buffer_pool = Arc::new(Mutex::new(buffer_pool));
         let scheduler = initialize_compaction_scheduler(compaction_interval, &buffer_pool);
 
@@ -189,9 +188,8 @@ fn initialize_compaction_scheduler(
 }
 
 /// Initializes the header given the buffer bool
-fn extract_header_from_buffer_pool(buffer_pool: &BufferPool) -> io::Result<DbFileHeader> {
-    let mut file = acquire_lock!(buffer_pool.file)?;
-    DbFileHeader::from_file(file.deref_mut())
+fn extract_header_from_buffer_pool(buffer_pool: &mut BufferPool) -> io::Result<DbFileHeader> {
+    DbFileHeader::from_file(&mut buffer_pool.file)
 }
 
 #[cfg(test)]
