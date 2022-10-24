@@ -35,7 +35,8 @@ following features:
   - `SIZE <the 4 byte unsigned integer showing number of bits for this whole entry>`
   - `KEY SIZE <the 4 byte unsigned integer showing number of bits for this key>`
   - `KEY <the key>`
-  - `EXPIRY <the timestamp>` (optional)
+  - `IS_DELETED <the 1-byte unsigned integer showing 1 for deleted, 0 for not>`
+  - `EXPIRY <the timestamp>`
   - `VALUE <the value in binary>`
 
 ## Acknowledgements

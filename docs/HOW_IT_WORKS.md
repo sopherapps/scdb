@@ -77,7 +77,7 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
 5. If this `key_value_offset` is non-zero, it is possible that the value for that key exists.
     - retrieve the key at the given `key_value_offset`.
         - if this key is the same as the key passed, we delete it:
-            - zero is then inserted at `index_address` in place of the former offset and exit
+            - update the `IS_DELETED` value of the key-value entry and exit
     - else increment the `index_block_offset` by `net_block_size`
         - if the new `index_block_offset` is equal to or greater than the `key_values_start_point`, stop and return.
           The key does not exist.
@@ -129,7 +129,7 @@ No read, nor write would be allowed. It can also be requested for by the user.
 2. Copy header into the new file
 3. Copy index into new file. This done index block by block.
 4. In each index block, find any non-zero index entries. For each of these:
-    - if the entry has not yet expired
+    - if the entry has not yet expired and is not deleted
         - append that key-value entry to the new file,
         - update the index for that entry in the new file.
           The index being the offset where it was appended (i.e. bottom of file)
@@ -183,6 +183,12 @@ Clear the entire database.
       computed `index buffer capacity`. This avoids waste.
     - methods like `read_at` which could use either the index or the key-value buffers will specify what buffer type
       they are interested in i.e. index or key-value.
+
+  ##### Findings
+    - This improved the reads (i.e. `get`) but had a very minimal effect on the `delete` operation, probably because
+      the cache-misses were a result of having very large buffers being operated on in one operation.
+    - Remedy: Changed the way deletion is done. Instead of updating the index, we update the actual key-value
+      entry's `IS_DELETED` attribute
 
 - #### Index Memory Hoarding
   The index can take up a lot of space in memory - so much so that updating it has to be done incrementally directly

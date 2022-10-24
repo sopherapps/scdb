@@ -1,10 +1,11 @@
 use crate::internal;
 use crate::internal::get_current_timestamp;
 use crate::internal::macros::safe_slice;
+use crate::internal::utils::{bool_to_byte_array, byte_array_to_bool};
 use std::fmt::Debug;
 use std::io;
 
-pub(crate) const KEY_VALUE_MIN_SIZE_IN_BYTES: u32 = 4 + 4 + 8;
+pub(crate) const KEY_VALUE_MIN_SIZE_IN_BYTES: u32 = 4 + 4 + 8 + 1;
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct KeyValueEntry<'a> {
@@ -12,6 +13,7 @@ pub(crate) struct KeyValueEntry<'a> {
     pub(crate) key_size: u32,
     pub(crate) key: &'a [u8],
     pub(crate) expiry: u64,
+    pub(crate) is_deleted: bool,
     pub(crate) value: &'a [u8],
 }
 
@@ -30,6 +32,7 @@ impl<'a> KeyValueEntry<'a> {
             key,
             expiry,
             value,
+            is_deleted: false,
         }
     }
 
@@ -45,14 +48,18 @@ impl<'a> KeyValueEntry<'a> {
         let k_size = key_size as usize;
         let key = safe_slice!(data, offset + 8, offset + 8 + k_size, data_len)?;
 
-        let expiry_slice = safe_slice!(data, offset + 8 + k_size, offset + k_size + 16, data_len)?;
+        let is_deleted_slice =
+            safe_slice!(data, offset + 8 + k_size, offset + k_size + 9, data_len)?;
+        let is_deleted = byte_array_to_bool(is_deleted_slice);
+
+        let expiry_slice = safe_slice!(data, offset + 9 + k_size, offset + k_size + 17, data_len)?;
         let expiry = u64::from_be_bytes(internal::slice_to_array(expiry_slice)?);
 
         let value_size = (size - key_size - KEY_VALUE_MIN_SIZE_IN_BYTES) as usize;
         let value = safe_slice!(
             data,
-            offset + k_size + 16,
-            offset + k_size + 16 + value_size,
+            offset + k_size + 17,
+            offset + k_size + 17 + value_size,
             data_len
         )?;
 
@@ -62,6 +69,7 @@ impl<'a> KeyValueEntry<'a> {
             key,
             expiry,
             value,
+            is_deleted,
         };
         Ok(entry)
     }
@@ -73,6 +81,7 @@ impl<'a> KeyValueEntry<'a> {
             .iter()
             .chain(&self.key_size.to_be_bytes())
             .chain(self.key)
+            .chain(bool_to_byte_array(self.is_deleted))
             .chain(&self.expiry.to_be_bytes())
             .chain(self.value)
             .map(|v| v.to_owned())
@@ -94,10 +103,10 @@ impl<'a> KeyValueEntry<'a> {
 mod tests {
     use super::*;
 
-    const KV_DATA_ARRAY: [u8; 22] = [
-        /* size: 22u32*/ 0u8, 0, 0, 22, /* key size: 3u32*/ 0, 0, 0, 3,
-        /* key */ 102, 111, 111, /* expiry 0u64 */ 0, 0, 0, 0, 0, 0, 0, 0,
-        /* value */ 98, 97, 114,
+    const KV_DATA_ARRAY: [u8; 23] = [
+        /* size: 22u32*/ 0u8, 0, 0, 23, /* key size: 3u32*/ 0, 0, 0, 3,
+        /* key */ 102, 111, 111, /* is_deleted */ 0, /* expiry 0u64 */ 0, 0, 0, 0,
+        0, 0, 0, 0, /* value */ 98, 97, 114,
     ];
 
     #[test]

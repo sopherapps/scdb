@@ -1,3 +1,5 @@
+use crate::internal::macros::validate_bounds;
+use crate::internal::utils::TRUE_AS_BYTE;
 use crate::internal::KeyValueEntry;
 use std::cmp::min;
 use std::io;
@@ -5,7 +7,7 @@ use std::io;
 #[derive(Debug, PartialEq)]
 pub(crate) struct Value {
     pub(crate) data: Vec<u8>,
-    pub(crate) is_expired: bool,
+    pub(crate) is_stale: bool,
 }
 
 /// This is the in-memory cache for byte arrays read from file
@@ -74,7 +76,11 @@ impl Buffer {
     #[inline]
     pub(crate) fn replace(&mut self, address: u64, data: Vec<u8>) -> io::Result<()> {
         let data_length = data.len();
-        self.validate_bounds(address, address + data_length as u64)?;
+        validate_bounds!(
+            (address, address + data_length as u64),
+            (self.left_offset, self.right_offset),
+            "address out of bounds"
+        )?;
 
         let start = (address - self.left_offset) as usize;
         let stop = start + data_length;
@@ -101,7 +107,11 @@ impl Buffer {
     /// Reads an arbitrary array at the given address and of given size and returns it
     #[inline]
     pub(crate) fn read_at(&self, address: u64, size: usize) -> io::Result<Vec<u8>> {
-        self.validate_bounds(address, address + size as u64)?;
+        validate_bounds!(
+            (address, address + size as u64),
+            (self.left_offset, self.right_offset),
+            "address out of bounds"
+        )?;
         let offset = (address - self.left_offset) as usize;
         let data_array = self.data[offset..offset + size].to_vec();
         Ok(data_array)
@@ -110,34 +120,39 @@ impl Buffer {
     /// Checks to see if the given address is for the given key
     #[inline]
     pub(crate) fn addr_belongs_to_key(&self, address: u64, key: &[u8]) -> io::Result<bool> {
-        if address < self.left_offset || address > self.right_offset {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "Address {} is out of bounds of {}-{}",
-                    address, self.left_offset, self.right_offset
-                ),
-            ));
-        }
-
-        let offset = (address - self.left_offset) as usize;
-        let entry = KeyValueEntry::from_data_array(&self.data, offset)?;
-        Ok(entry.key == key)
+        let key_size = key.len();
+        validate_bounds!(
+            (address, address + key_size as u64 + 8),
+            (self.left_offset, self.right_offset),
+            "address out of bounds"
+        )?;
+        let key_offset = (address - self.left_offset) as usize + 8;
+        let key_in_data = &self.data[key_offset..key_offset + key_size];
+        Ok(key_in_data == key)
     }
 
-    /// Checks if the given range is within bounds for this buffer
-    /// This is just a helper
-    fn validate_bounds(&self, lower: u64, upper: u64) -> io::Result<()> {
-        if lower < self.left_offset || upper > self.right_offset {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "Span {}-{} is out of bounds for {:?}",
-                    lower, upper, &self.data
-                ),
-            ))
+    /// Tries to delete the kv entry at the given address
+    /// It returns None if the kv entry at the given address is not for the given key
+    #[inline]
+    pub(crate) fn try_delete_kv_entry(
+        &mut self,
+        address: u64,
+        key: &[u8],
+    ) -> io::Result<Option<()>> {
+        let key_size = key.len();
+        validate_bounds!(
+            (address, address + key_size as u64 + 8),
+            (self.left_offset, self.right_offset),
+            "address out of bounds"
+        )?;
+        let key_offset = (address - self.left_offset) as usize + 8;
+        let key_in_data = &self.data[key_offset..key_offset + key_size];
+        if key_in_data == key {
+            let is_deleted_offset = key_offset + key_size;
+            self.data[is_deleted_offset] = TRUE_AS_BYTE;
+            Ok(Some(()))
         } else {
-            Ok(())
+            Ok(None)
         }
     }
 }
@@ -146,7 +161,7 @@ impl From<&KeyValueEntry<'_>> for Value {
     fn from(entry: &KeyValueEntry) -> Self {
         Self {
             data: entry.value.to_vec(),
-            is_expired: entry.is_expired(),
+            is_stale: entry.is_deleted || entry.is_expired(),
         }
     }
 }
@@ -156,10 +171,10 @@ mod tests {
     use super::*;
     use crate::internal::get_current_timestamp;
 
-    const KV_DATA_ARRAY: [u8; 22] = [
-        /* size: 22u32*/ 0u8, 0, 0, 22, /* key size: 3u32*/ 0, 0, 0, 3,
-        /* key */ 102, 111, 111, /* expiry 0u64 */ 0, 0, 0, 0, 0, 0, 0, 0,
-        /* value */ 98, 97, 114,
+    const KV_DATA_ARRAY: [u8; 23] = [
+        /* size: 22u32*/ 0u8, 0, 0, 23, /* key size: 3u32*/ 0, 0, 0, 3,
+        /* key */ 102, 111, 111, /* is_deleted */ 0, /* expiry 0u64 */ 0, 0, 0, 0,
+        0, 0, 0, 0, /* value */ 98, 97, 114,
     ];
     const CAPACITY: usize = 4098;
 
@@ -171,14 +186,14 @@ mod tests {
                 KeyValueEntry::new(&b"never_expires"[..], &b"barer"[..], 0),
                 Value {
                     data: vec![98, 97, 114, 101, 114],
-                    is_expired: false,
+                    is_stale: false,
                 },
             ),
             (
                 KeyValueEntry::new(&b"expires"[..], &b"Hallelujah"[..], 1666023836u64),
                 Value {
                     data: vec![72, 97, 108, 108, 101, 108, 117, 106, 97, 104],
-                    is_expired: true,
+                    is_stale: true,
                 },
             ),
             (
@@ -189,7 +204,7 @@ mod tests {
                 ),
                 Value {
                     data: vec![98, 97, 114],
-                    is_expired: false,
+                    is_stale: false,
                 },
             ),
         ];
@@ -372,10 +387,11 @@ mod tests {
     #[test]
     fn buffer_addr_belongs_to_key_out_of_bounds() {
         let buf = Buffer::new(79, &KV_DATA_ARRAY[..], CAPACITY);
-        let test_table = vec![
+        let test_table: Vec<(u64, &[u8])> = vec![
             (790u64, b"foo"),
             (78u64, b"foo"),
-            (80u64, b"foo"),
+            (80u64, b"foo......................................."), // long key
+            (79u64, b"foo......................................."), // long key
             (78u64, b"bar"),
             (790u64, b"bar"),
         ];
@@ -387,26 +403,40 @@ mod tests {
     }
 
     #[test]
-    fn buffer_validate_bounds() {
-        let buf = Buffer::new(
-            79,
-            &[72, 97, 108, 108, 101, 108, 117, 106, 97, 104],
-            CAPACITY,
-        );
+    fn buffer_try_delete_kv_entry() {
+        let mut post_delete_data = KV_DATA_ARRAY.clone();
+        post_delete_data[11] = 1;
+
         let test_table = vec![
-            (85, 90, true),
-            (86, 90, true),
-            (90, 94, true),
-            (100, 101, true),
-            (70, 73, true),
-            (79, 83, false),
-            (83, 88, false),
-            (79, 89, false),
+            (79u64, b"foo", Some(()), &post_delete_data),
+            (79u64, b"bar", None, &KV_DATA_ARRAY),
         ];
 
-        for (lower, upper, expected) in test_table {
-            let v = buf.validate_bounds(lower, upper);
-            assert_eq!(v.is_err(), expected)
+        for (addr, k, expected_response, expected_data) in test_table {
+            let mut buf = Buffer::new(79, &KV_DATA_ARRAY[..], CAPACITY);
+            let v = buf
+                .try_delete_kv_entry(addr, &k[..])
+                .expect(&format!("gets value for {:?}", &k));
+            assert_eq!(v, expected_response);
+            assert_eq!(buf.data, expected_data);
+        }
+    }
+
+    #[test]
+    fn buffer_try_delete_kv_entry_out_of_bounds() {
+        let mut buf = Buffer::new(79, &KV_DATA_ARRAY[..], CAPACITY);
+        let test_table: Vec<(u64, &[u8])> = vec![
+            (790u64, b"foo"),
+            (78u64, b"foo"),
+            (80u64, b"foo......................................."), // long key
+            (79u64, b"foo......................................."), // long key
+            (78u64, b"bar"),
+            (790u64, b"bar"),
+        ];
+
+        for (addr, k) in test_table {
+            let v = buf.try_delete_kv_entry(addr, &k[..]);
+            assert!(v.is_err());
         }
     }
 }

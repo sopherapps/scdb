@@ -104,15 +104,11 @@ impl Store {
 
             if entry_offset != 0 {
                 if let Some(v) = buffer_pool.get_value(entry_offset, k)? {
-                    let value = match v.is_expired {
-                        true => {
-                            // erase the index
-                            buffer_pool.update_index(index_offset, &0u64.to_be_bytes())?;
-                            None
-                        }
-                        false => Some(v.data),
+                    return if v.is_stale {
+                        Ok(None)
+                    } else {
+                        Ok(Some(v.data))
                     };
-                    return Ok(value);
                 }
             }
 
@@ -135,11 +131,10 @@ impl Store {
             let kv_offset_in_bytes = buffer_pool.read_index(index_offset)?;
             let entry_offset = u64::from_be_bytes(slice_to_array(&kv_offset_in_bytes)?);
 
-            if entry_offset != 0 && buffer_pool.addr_belongs_to_key(entry_offset, k)? {
-                // erase the index
-                buffer_pool.update_index(index_offset, &0u64.to_be_bytes())?;
-
-                return Ok(());
+            if entry_offset != 0 {
+                if let Some(()) = buffer_pool.try_delete_kv_entry(entry_offset, k)? {
+                    return Ok(());
+                }
             }
 
             index_block += 1;
