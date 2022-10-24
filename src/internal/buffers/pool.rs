@@ -36,7 +36,7 @@ pub(crate) struct BufferPool {
     index_buffers: Mutex<BTreeMap<u64, Buffer>>,
     pub(crate) file: Mutex<File>,
     pub(crate) file_path: PathBuf,
-    pub(crate) file_size: Mutex<u64>,
+    pub(crate) file_size: u64,
 }
 
 const OFFSET_FOR_KEY_IN_KV_ARRAY: usize = 8;
@@ -86,7 +86,7 @@ impl BufferPool {
             kv_buffers: Mutex::new(VecDeque::with_capacity(kv_capacity)),
             index_buffers: Default::default(),
             file: Mutex::new(file),
-            file_size: Mutex::new(file_size),
+            file_size,
             file_path: file_path.into(),
         };
 
@@ -98,14 +98,13 @@ impl BufferPool {
     pub(crate) fn append(&mut self, data: &mut Vec<u8>) -> io::Result<u64> {
         let mut file = acquire_lock!(self.file)?;
         let mut kv_buffers = acquire_lock!(self.kv_buffers)?;
-        let mut file_size = acquire_lock!(self.file_size)?;
 
         // loop in reverse, starting at the back
         // since the latest kv_buffers are the ones updated when new changes occur
         for buf in kv_buffers.iter_mut().rev() {
-            if buf.can_append(*file_size) {
+            if buf.can_append(self.file_size) {
                 let addr = buf.append(data.clone());
-                *file_size = buf.right_offset;
+                self.file_size = buf.right_offset;
                 file.seek(SeekFrom::End(0))?;
                 file.write_all(data)?;
                 return Ok(addr);
@@ -115,7 +114,7 @@ impl BufferPool {
         let start = file.seek(SeekFrom::End(0))?;
         let new_file_size = start + data.len() as u64;
         file.write_all(data)?;
-        *file_size = new_file_size;
+        self.file_size = new_file_size;
         Ok(start)
     }
 
@@ -153,8 +152,7 @@ impl BufferPool {
         let mut file = acquire_lock!(self.file)?;
         let mut kv_buffers = acquire_lock!(self.kv_buffers)?;
         let mut index_buffers = acquire_lock!(self.index_buffers)?;
-        let mut file_size = acquire_lock!(self.file_size)?;
-        *file_size = initialize_db_file(file.deref_mut(), &header)?;
+        self.file_size = initialize_db_file(file.deref_mut(), &header)?;
         index_buffers.clear();
         kv_buffers.clear();
 
@@ -175,7 +173,6 @@ impl BufferPool {
         let mut file = acquire_lock!(self.file)?;
         let mut kv_buffers = acquire_lock!(self.kv_buffers)?;
         let mut index_buffers = acquire_lock!(self.index_buffers)?;
-        let mut file_size = acquire_lock!(self.file_size)?;
 
         let header: DbFileHeader = DbFileHeader::from_file(&mut file)?;
         drop(file);
@@ -233,7 +230,7 @@ impl BufferPool {
         index_buffers.clear();
         let mut file = acquire_lock!(self.file)?;
         *file = new_file;
-        *file_size = new_file_offset;
+        self.file_size = new_file_offset;
 
         fs::remove_file(&self.file_path)?;
         fs::rename(&new_file_path, &self.file_path)?;
@@ -324,11 +321,9 @@ impl BufferPool {
     ///
     /// It also returns false if the address goes beyond the size of the file
     pub(crate) fn addr_belongs_to_key(&mut self, kv_address: u64, key: &[u8]) -> io::Result<bool> {
-        let file_size = acquire_lock!(self.file_size)?;
-        if kv_address >= *file_size {
+        if kv_address >= self.file_size {
             return Ok(false);
         }
-        drop(file_size);
 
         let mut kv_buffers = acquire_lock!(self.kv_buffers)?;
         // loop in reverse, starting at the back
@@ -410,13 +405,10 @@ impl PartialEq for BufferPool {
         let kv_buffers = acquire_lock!(self.kv_buffers).expect("lock acquired for self kv_buffers");
         let index_buffers =
             acquire_lock!(self.index_buffers).expect("lock acquired for self index_buffers");
-        let file_size = acquire_lock!(self.file_size).expect("acquire lock on self file_size");
         let other_kv_buffers =
             acquire_lock!(other.kv_buffers).expect("lock acquired for other kv_buffers");
         let other_index_buffers =
             acquire_lock!(other.index_buffers).expect("lock acquired for other index_buffers");
-        let other_file_size =
-            acquire_lock!(other.file_size).expect("acquire lock on other file_size");
 
         self.kv_capacity == other.kv_capacity
             && self.index_capacity == other.index_capacity
@@ -425,7 +417,7 @@ impl PartialEq for BufferPool {
             && self.max_keys == other.max_keys
             && self.redundant_blocks == other.redundant_blocks
             && self.file_path == other.file_path
-            && *file_size == *other_file_size
+            && self.file_size == other.file_size
             && *kv_buffers == *other_kv_buffers
             && *index_buffers == *other_index_buffers
     }
@@ -514,7 +506,7 @@ mod tests {
             max_keys: Option<u64>,
             redundant_blocks: Option<u16>,
             file_path: PathBuf,
-            file_size: Mutex<u64>,
+            file_size: u64,
         }
 
         let test_data: Vec<(Config, Expected)> = vec![
@@ -525,9 +517,7 @@ mod tests {
                     max_keys: None,
                     redundant_blocks: None,
                     file_path: Path::new(file_name).into(),
-                    file_size: Mutex::new(
-                        DbFileHeader::new(None, None, None).key_values_start_point,
-                    ),
+                    file_size: DbFileHeader::new(None, None, None).key_values_start_point,
                 },
             ),
             (
@@ -537,9 +527,7 @@ mod tests {
                     max_keys: None,
                     redundant_blocks: None,
                     file_path: Path::new(file_name).into(),
-                    file_size: Mutex::new(
-                        DbFileHeader::new(None, None, None).key_values_start_point,
-                    ),
+                    file_size: DbFileHeader::new(None, None, None).key_values_start_point,
                 },
             ),
             (
@@ -549,9 +537,7 @@ mod tests {
                     max_keys: Some(360),
                     redundant_blocks: None,
                     file_path: Path::new(file_name).into(),
-                    file_size: Mutex::new(
-                        DbFileHeader::new(Some(360), None, None).key_values_start_point,
-                    ),
+                    file_size: DbFileHeader::new(Some(360), None, None).key_values_start_point,
                 },
             ),
             (
@@ -561,9 +547,7 @@ mod tests {
                     max_keys: None,
                     redundant_blocks: Some(4),
                     file_path: Path::new(file_name).into(),
-                    file_size: Mutex::new(
-                        DbFileHeader::new(None, Some(4), None).key_values_start_point,
-                    ),
+                    file_size: DbFileHeader::new(None, Some(4), None).key_values_start_point,
                 },
             ),
             (
@@ -573,9 +557,7 @@ mod tests {
                     max_keys: None,
                     redundant_blocks: None,
                     file_path: Path::new(file_name).into(),
-                    file_size: Mutex::new(
-                        DbFileHeader::new(None, None, Some(2048)).key_values_start_point,
-                    ),
+                    file_size: DbFileHeader::new(None, None, Some(2048)).key_values_start_point,
                 },
             ),
         ];
@@ -593,10 +575,7 @@ mod tests {
             assert_eq!(&got.redundant_blocks, &expected.redundant_blocks);
             assert_eq!(&got.file_path, &expected.file_path);
             assert_eq!(&got.buffer_size, &expected.buffer_size);
-            let got_file_size = acquire_lock!(got.file_size).expect("acquire lock on file_size");
-            let expected_file_size =
-                acquire_lock!(expected.file_size).expect("acquire lock on file_size");
-            assert_eq!(*got_file_size, *expected_file_size);
+            assert_eq!(&got.file_size, &expected.file_size);
 
             // delete the file so that BufferPool::new() can reinitialize it for the next iteration
             fs::remove_file(&got.file_path).expect(&format!("delete file {:?}", &got.file_path));
@@ -1201,15 +1180,13 @@ mod tests {
 
     /// Extracts the pool's file_size attribute
     fn get_pool_file_size(pool: &mut BufferPool) -> u64 {
-        let file_size = acquire_lock!(pool.file_size).expect("get lock on file size");
-        let initial_file_size = *file_size;
+        let initial_file_size = pool.file_size;
         initial_file_size
     }
 
     /// Manually increments the pool's file_size attribute
     fn increment_pool_file_size(pool: &mut BufferPool, incr: u64) {
-        let mut file_size = acquire_lock!(pool.file_size).expect("get lock on file size");
-        *file_size += incr
+        pool.file_size += incr;
     }
 
     /// Reads from the file at the given file path at the given offset returning the number of bytes read
