@@ -9,13 +9,13 @@ use std::sync::Mutex;
 pub(crate) struct Index<'a> {
     num_of_blocks: u64,
     block_size: u64,
-    file: &'a Mutex<File>,
+    file: &'a Mutex<&'a File>,
     cursor: u64,
 }
 
 impl<'a> Index<'a> {
     /// Creates a new index instance
-    pub(crate) fn new(file: &'a Mutex<File>, header: &DbFileHeader) -> Self {
+    pub(crate) fn new(file: &'a Mutex<&'a File>, header: &DbFileHeader) -> Self {
         Self {
             num_of_blocks: header.number_of_index_blocks,
             block_size: header.net_block_size,
