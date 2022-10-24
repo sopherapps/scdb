@@ -128,10 +128,10 @@ fn get_updates() -> Vec<(Vec<u8>, Vec<u8>)> {
 
 criterion_group!(
     benches,
-    // setting_benchmark,
-    // updating_benchmark,
-    // getting_benchmark,
-    // deleting_benchmark,
+    setting_benchmark,
+    updating_benchmark,
+    getting_benchmark,
+    deleting_benchmark,
     clearing_benchmark
 );
 criterion_main!(benches);
