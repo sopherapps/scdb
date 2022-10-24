@@ -271,7 +271,7 @@ delete bonjour          time:   [5.3178 µs 5.3269 µs 5.3371 µs]
 delete hola             time:   [5.3025 µs 5.3150 µs 5.3295 µs]
 delete oi               time:   [5.2892 µs 5.2959 µs 5.3029 µs]
 delete mulimuta         time:   [5.2611 µs 5.2701 µs 5.2788 µs]
-clear                   time:   [7.0131 ms 7.0549 ms 7.1265 ms]
+clear                   time:   [99.167 µs 99.881 µs 100.80 µs]
 ```
 
 ## Acknowledgement

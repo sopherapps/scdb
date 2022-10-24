@@ -476,21 +476,17 @@ fn get_kv_bytes(file: &Mutex<File>, address: &[u8]) -> io::Result<Vec<u8>> {
 /// and truncating it. It returns the new file size
 fn initialize_db_file(file: &mut File, header: &DbFileHeader) -> io::Result<u64> {
     let header_bytes = header.as_bytes();
-    debug_assert_eq!(header_bytes.len(), 100);
+    let header_length = header_bytes.len() as u64;
+    debug_assert_eq!(header_length, 100);
+    let final_size = header_length + (header.number_of_index_blocks * header.net_block_size);
 
     file.seek(SeekFrom::Start(0))?;
     file.write_all(&header_bytes)?;
-
-    // The index can be too big to fit in memory so we have to add it block by block
-    let block_size = header.net_block_size as usize;
-    for _ in 0..header.number_of_index_blocks {
-        file.write_all(&vec![0u8; block_size])?;
-    }
-
-    let size = header_bytes.len() as u64 + (header.number_of_index_blocks * header.net_block_size);
-    file.set_len(size)?;
-
-    Ok(size)
+    // shrink file if it is still long
+    file.set_len(header_length)?;
+    // expand file to expected value, filling the extras with 0s
+    file.set_len(final_size)?;
+    Ok(final_size)
 }
 
 #[cfg(test)]
