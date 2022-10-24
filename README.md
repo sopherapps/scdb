@@ -272,6 +272,7 @@ delete hola             time:   [5.8874 µs 6.1807 µs 6.5191 µs]
 delete oi               time:   [6.3242 µs 6.6555 µs 7.0835 µs]
 delete mulimuta         time:   [5.7596 µs 5.9081 µs 6.1716 µs]
 clear                   time:   [109.92 µs 111.21 µs 112.53 µs]
+compact                 time:   [28.984 ms 29.675 ms 30.401 ms]
 ```
 
 ## Acknowledgement

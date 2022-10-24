@@ -98,6 +98,26 @@ fn clearing_benchmark(c: &mut Criterion) {
     c.bench_function("clear", |b| b.iter(|| store.clear()));
 }
 
+// Compacting
+fn compacting_benchmark(c: &mut Criterion) {
+    let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+    store.clear().expect("clear store");
+    let records = get_records();
+    for (k, v) in &records[..3] {
+        store.set(k, v, Some(1)).expect(&format!("set {:?}", k));
+    }
+
+    for (k, v) in &records[3..] {
+        store.set(k, v, None).expect(&format!("set {:?}", k));
+    }
+
+    for (k, _) in &records[2..3] {
+        store.delete(k).expect(&format!("delete {:?}", k));
+    }
+
+    c.bench_function("compact", |b| b.iter(|| store.compact()));
+}
+
 fn get_records() -> Vec<(Vec<u8>, Vec<u8>)> {
     [
         ("hey", "English"),
@@ -132,6 +152,7 @@ criterion_group!(
     updating_benchmark,
     getting_benchmark,
     deleting_benchmark,
-    clearing_benchmark
+    clearing_benchmark,
+    compacting_benchmark,
 );
 criterion_main!(benches);
