@@ -2,6 +2,14 @@
 name = "scdb"
 version = "0.0.1"
 edition = "2021"
+license-file = "LICENSE"
+repository = "https://github.com/sopherapps/scdb"
+readme = "README.md"
+description = "A very simple and fast key-value store but persisting data to disk, with a 'localStorage-like' API."
+authors = ["Martin Ahindura <team.sopherapps@gmail.com>"]
+keywords = ["cache", "key-value-store", "disk-cache", "database", "hashmap"]
+categories = ["caching", "database"]
+exclude = ["examples/*"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
