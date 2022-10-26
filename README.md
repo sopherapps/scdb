@@ -4,9 +4,7 @@
 
 A very simple and fast key-value store but persisting data to disk, with a "localStorage-like" API.
 
-**scdb is not yet production ready. It is not even working yet!!. It is still being heavily developed and its API (and
-features) could change quite
-drastically**
+**scdb msy not be yet production ready. It works but it requires more vigorous testing.**
 
 ## Purpose
 
@@ -25,6 +23,12 @@ Of course to make it a little more appealing, it has some extra features like:
 - Time-to-live (TTL) where a key-value pair expires after a given time
 - Non-blocking reads from separate processes, and threads.
 - Fast Sequential writes to the store, queueing any writes from multiple processes and threads.
+
+## Documentation
+
+Find the following documentation sites, depending on the programming language.
+
+- [rust scdb doc](https://docs.rs/scdb)
 
 ## Quick Start
 

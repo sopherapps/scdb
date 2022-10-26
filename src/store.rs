@@ -15,7 +15,7 @@ const DEFAULT_DB_FILE: &str = "dump.scdb";
 
 /// A key-value store that persists key-value pairs to disk
 ///
-/// Store behaves like a HashMap that saves keys and value are byte arrays
+/// Store behaves like a HashMap that saves keys and value as byte arrays
 /// on disk. It allows for specifying how long each key-value pair should be
 /// kept for i.e. the time-to-live in seconds. If None is provided, they last indefinitely.
 ///
@@ -106,7 +106,7 @@ impl Store {
     ///
     /// # Errors
     ///
-    /// It may fail with [std::io::Error] if it can find the write to the `store_path` say due to permissions
+    /// It may fail with [std::io::Error] if it can't write to the `store_path` say due to permissions errors
     ///
     /// # Examples
     ///
