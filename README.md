@@ -28,7 +28,7 @@ Of course to make it a little more appealing, it has some extra features like:
 
 Find the following documentation sites, depending on the programming language.
 
-- [rust scdb doc](https://docs.rs/scdb)
+- [rust scdb docs](https://docs.rs/scdb)
 
 ## Quick Start
 
