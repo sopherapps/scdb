@@ -9,7 +9,7 @@ description = "A very simple and fast key-value store but persisting data to dis
 authors = ["Martin Ahindura <team.sopherapps@gmail.com>"]
 keywords = ["cache", "key-value-store", "disk-cache", "database", "hashmap"]
 categories = ["caching", "database"]
-exclude = ["examples/*", ".github/*", "docs/*", "benches/*"]
+exclude = ["examples/*", ".github/*", "docs/*"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
