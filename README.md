@@ -178,7 +178,7 @@ scdb is meant to be used in multiple languages of choice. However, the bindings 
 developed.
 Here are those that have been developed:
 
-- [ ] [rust](TODO)
+- [x] [rust](https://crates.io/crates/scdb)
 - [ ] [python](TODO)
 - [ ] [golang](TODO)
 - [ ] [c/c++](TODO)
@@ -188,21 +188,7 @@ Here are those that have been developed:
 
 ### TODO:
 
-- [x] Add designs
-- [x] Implement basic skeleton
-- [x] Add tests for internal::utils
-- [x] Add tests for internal::entries::KeyValueEntry
-- [x] Add tests for internal::entries::DbFileHeader
-- [x] Add tests for internal::buffers::Buffer
-- [x] Add tests for internal::buffers::Value
-- [x] Add tests for internal::buffers::BufferPool
-- [x] Add tests for store::Store
-- [x] Add examples
-- [x] Add GitHub actions for CI
-- [x] Add package documentation
-- [x] Add benchmarks
 - [ ] compare benchmarks with those of redis, sqlite, lmdb etc.
-- [x] Release version 0.0.1
 
 ### How to Test
 
