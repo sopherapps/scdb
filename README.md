@@ -38,7 +38,7 @@ Of course to make it a little more appealing, it has some extra features like:
 
   ```toml
   [dependencies]
-  scdb = { git = "https://github.com/sopherapps/scdb", branch = "master" }
+  scdb = { version = "0.0.1" }
   ```
 
 - Update your `src/main.rs` to the following.
@@ -199,11 +199,10 @@ Here are those that have been developed:
 - [x] Add tests for store::Store
 - [x] Add examples
 - [x] Add GitHub actions for CI
-- [ ] Add GitHub actions for CD
 - [x] Add package documentation
 - [x] Add benchmarks
 - [ ] compare benchmarks with those of redis, sqlite, lmdb etc.
-- [ ] Release version 0.0.1
+- [x] Release version 0.0.1
 
 ### How to Test
 
