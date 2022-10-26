@@ -9,6 +9,7 @@ use crate::internal::{
 };
 use std::cmp::{max, min};
 use std::collections::{BTreeMap, VecDeque};
+use std::fmt::{Display, Formatter};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -388,6 +389,26 @@ impl PartialEq for BufferPool {
             && self.file_size == other.file_size
             && self.kv_buffers == other.kv_buffers
             && self.index_buffers == other.index_buffers
+    }
+}
+
+impl Display for BufferPool {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "BufferPool {{kv_capacity: {}, index_capacity: {}, buffer_size: {}, key_values_start_point: {}, max_keys: {:?}, redundant_blocks: {:?}, kv_buffers: {:?}, index_buffers: {:?}, file: {:?}, file_path: {:?}, file_size: {}}}",
+            self.kv_capacity,
+            self.index_capacity,
+            self.buffer_size,
+            self.key_values_start_point,
+            self.max_keys,
+            self.redundant_blocks,
+            self.kv_buffers,
+            self.index_buffers,
+            self.file,
+            self.file_path,
+            self.file_size,
+        )
     }
 }
 

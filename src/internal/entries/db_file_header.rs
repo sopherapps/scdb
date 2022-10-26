@@ -1,4 +1,5 @@
 use crate::internal::{get_hash, utils};
+use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io;
 use std::io::{Read, Seek, SeekFrom};
@@ -6,7 +7,7 @@ use std::io::{Read, Seek, SeekFrom};
 pub(crate) const INDEX_ENTRY_SIZE_IN_BYTES: u64 = 8;
 pub(crate) const HEADER_SIZE_IN_BYTES: u64 = 100;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Eq, Ord, PartialOrd)]
 pub(crate) struct DbFileHeader {
     pub(crate) title: String,
     pub(crate) block_size: u32,
@@ -147,6 +148,20 @@ impl DbFileHeader {
         }
 
         Ok(initial_offset + (self.net_block_size * n))
+    }
+}
+
+impl Display for DbFileHeader {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DbFileHeader {{ title: {}, block_size: {}, max_keys: {}, redundant_blocks: {}, items_per_index_block: {}, number_of_index_blocks: {}, key_values_start_point: {}, net_block_size: {}}}",
+               self.title,
+               self.block_size,
+               self.max_keys,
+               self.redundant_blocks,
+               self.items_per_index_block,
+               self.number_of_index_blocks,
+               self.key_values_start_point,
+               self.net_block_size)
     }
 }
 

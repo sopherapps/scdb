@@ -1,3 +1,4 @@
+use std::fmt::{Debug, Display, Formatter};
 use std::io;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -379,6 +380,22 @@ impl Store {
     pub fn compact(&mut self) -> io::Result<()> {
         let mut buffer_pool = acquire_lock!(self.buffer_pool)?;
         buffer_pool.compact_file()
+    }
+}
+
+impl Debug for Store {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Store {{ buffer_pool: {:?}, header: {}}}",
+            self.buffer_pool, self.header
+        )
+    }
+}
+
+impl Display for Store {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
     }
 }
 

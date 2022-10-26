@@ -2,9 +2,10 @@ use crate::internal::macros::validate_bounds;
 use crate::internal::utils::TRUE_AS_BYTE;
 use crate::internal::KeyValueEntry;
 use std::cmp::min;
+use std::fmt::{Display, Formatter};
 use std::io;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Eq, Ord, PartialOrd, Default)]
 pub(crate) struct Value {
     pub(crate) data: Vec<u8>,
     pub(crate) is_stale: bool,
@@ -15,7 +16,7 @@ pub(crate) struct Value {
 /// while its `right_offset` is the *exclusive* upper bound file offset of the same.
 /// the `right_offset` is not an offset within this buffer but is the left_offset of the buffer
 /// that would be got from the file to the immediate right of this buffer's data array
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Eq, Ord, PartialOrd, Default)]
 pub(crate) struct Buffer {
     capacity: usize,
     pub(crate) data: Vec<u8>,
@@ -154,6 +155,16 @@ impl Buffer {
         } else {
             Ok(None)
         }
+    }
+}
+
+impl Display for Buffer {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Buffer {{capacity: {}, data: {:?}, left_offset: {}, right_offset: {}}}",
+            self.capacity, self.data, self.left_offset, self.right_offset,
+        )
     }
 }
 
