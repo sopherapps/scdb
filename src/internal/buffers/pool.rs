@@ -254,7 +254,7 @@ impl BufferPool {
             self.buffer_size,
         ));
 
-        let entry: KeyValueEntry = KeyValueEntry::from_data_array(&buf, 0)?;
+        let entry = KeyValueEntry::from_data_array(&buf, 0)?;
 
         let value = if entry.key == key && !entry.is_expired() {
             Some(Value::from(&entry))
@@ -477,7 +477,7 @@ mod tests {
             file_size: u64,
         }
 
-        let test_data: Vec<(Config, Expected)> = vec![
+        let test_data: Vec<(Config<'_>, Expected)> = vec![
             (
                 (None, &Path::new(file_name), None, None, None),
                 Expected {
@@ -561,7 +561,7 @@ mod tests {
             Option<usize>,
         );
         let file_name = "testdb.scdb";
-        let test_data: Vec<Config> = vec![
+        let test_data: Vec<Config<'_>> = vec![
             (None, &Path::new(file_name), None, None, None),
             (Some(60), &Path::new(file_name), None, None, None),
             (None, &Path::new(file_name), Some(360), None, None),
@@ -1176,14 +1176,18 @@ mod tests {
     }
 
     /// Deletes a given key value in the given pool
-    fn delete_key_value(pool: &mut BufferPool, header: &DbFileHeader, kv: &KeyValueEntry) {
+    fn delete_key_value(pool: &mut BufferPool, header: &DbFileHeader, kv: &KeyValueEntry<'_>) {
         let addr = header.get_index_offset(kv.key);
         pool.update_index(addr, &0u64.to_be_bytes())
             .expect("replace deleted key with empty");
     }
 
     /// Inserts a key value entry into the pool, updating the index also
-    fn insert_key_value_entry(pool: &mut BufferPool, header: &DbFileHeader, kv: &KeyValueEntry) {
+    fn insert_key_value_entry(
+        pool: &mut BufferPool,
+        header: &DbFileHeader,
+        kv: &KeyValueEntry<'_>,
+    ) {
         let idx_addr = header.get_index_offset(kv.key);
         let kv_addr = pool
             .append(&mut kv.as_bytes())
@@ -1194,7 +1198,7 @@ mod tests {
     }
 
     /// Checks whether a given key value entry exists in the data array got from the file
-    fn key_value_exists(data: &Vec<u8>, header: &DbFileHeader, kv: &KeyValueEntry) -> bool {
+    fn key_value_exists(data: &Vec<u8>, header: &DbFileHeader, kv: &KeyValueEntry<'_>) -> bool {
         let idx_item_size = INDEX_ENTRY_SIZE_IN_BYTES as usize;
         let idx_addr = header.get_index_offset(kv.key) as usize;
         let kv_addr = data[idx_addr..idx_addr + idx_item_size].to_vec();
@@ -1210,7 +1214,7 @@ mod tests {
     }
 
     /// Returns the address for the given key value entry within the buffer pool
-    fn get_kv_address(pool: &mut BufferPool, header: &DbFileHeader, kv: &KeyValueEntry) -> u64 {
+    fn get_kv_address(pool: &mut BufferPool, header: &DbFileHeader, kv: &KeyValueEntry<'_>) -> u64 {
         let mut kv_address = vec![0u8; INDEX_ENTRY_SIZE_IN_BYTES as usize];
         let index_address = header.get_index_offset(kv.key);
 

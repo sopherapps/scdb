@@ -37,38 +37,48 @@ Next:
 # use std::io;
 
 # fn main() -> io::Result<()> {
-    // Creat the store. You can configure its `max_keys`, `redundant_blocks` etc. The defaults are usable though.
-    // One very important config is `max_keys`. With it, you can limit the store size to a number of keys.
+    // Create the store. You can configure its `max_keys`, `redundant_blocks` etc.
+    // The defaults are usable though.
+    // One very important config is `max_keys`.
+    // With it, you can limit the store size to a number of keys.
     // By default, the limit is 1 million keys
-    let mut store =
-        scdb::Store::new("db", Some(1000), Some(1), Some(10), Some(1800)).expect("create store");
+    let mut store = scdb::Store::new("db", // `store_path`
+                            Some(1000), // `max_keys`
+                            Some(1), // `redundant_blocks`
+                            Some(10), // `pool_capacity`
+                            Some(1800))?; // `compaction_interval`
     let key = b"foo";
     let value = b"bar";
 
     // Insert key-value pair into the store with no time-to-live
-    store.set(&key, &value, None)?;
+    store.set(&key[..], &value[..], None)?;
+    # assert_eq!(store.get(&key[..])?, Some(value.to_vec()));
 
     // Or insert it with an optional time-to-live (ttl)
     // It will disappear from the store after `ttl` seconds
-    store.set(&key, &value, Some(1))?;
+    store.set(&key[..], &value[..], Some(1))?;
+    # assert_eq!(store.get(&key[..])?, Some(value.to_vec()));
 
     // Getting the values by passing the key in bytes to store.get
-    let value_in_store: Option<Vec<u8>> = store.get(&key)?;
+    let value_in_store = store.get(&key[..])?;
+    assert_eq!(value_in_store, Some(value.to_vec()));
 
     // Updating the values is just like inserting them. Any key-value already in the store will
     // be overwritten
-    store.set(&key, &value, None)?;
+    store.set(&key[..], &value[..], None)?;
 
     // Delete the key-value pair by supplying the key as an argument to store.delete
-    store.delete(&key)?;
+    store.delete(&key[..])?;
+    assert_eq!(store.get(&key[..])?, None);
 
     // Deleting all key-value pairs to start afresh, use store.clear()
+    # store.set(&key[..], &value[..], None)?;
     store.clear()?;
+    # assert_eq!(store.get(&key[..])?, None);
 
     # Ok(())
 # }
 ```
-
  */
 
 #![deny(missing_docs)]

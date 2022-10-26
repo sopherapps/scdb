@@ -158,7 +158,7 @@ impl Buffer {
 }
 
 impl From<&KeyValueEntry<'_>> for Value {
-    fn from(entry: &KeyValueEntry) -> Self {
+    fn from(entry: &KeyValueEntry<'_>) -> Self {
         Self {
             data: entry.value.to_vec(),
             is_stale: entry.is_deleted || entry.is_expired(),
@@ -180,8 +180,7 @@ mod tests {
 
     #[test]
     fn value_from_key_value_entry() {
-        type Record<'a> = (KeyValueEntry<'a>, Value);
-        let test_table: Vec<Record> = vec![
+        let test_table = vec![
             (
                 KeyValueEntry::new(&b"never_expires"[..], &b"barer"[..], 0),
                 Value {

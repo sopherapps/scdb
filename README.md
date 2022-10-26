@@ -200,7 +200,7 @@ Here are those that have been developed:
 - [x] Add examples
 - [x] Add GitHub actions for CI
 - [ ] Add GitHub actions for CD
-- [ ] Add package documentation
+- [x] Add package documentation
 - [x] Add benchmarks
 - [ ] compare benchmarks with those of redis, sqlite, lmdb etc.
 - [ ] Release version 0.0.1

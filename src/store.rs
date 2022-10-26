@@ -12,6 +12,88 @@ use crate::internal::{
 
 const DEFAULT_DB_FILE: &str = "dump.scdb";
 
+/// A key-value store that persists key-value pairs to disk
+///
+/// Store behaves like a HashMap that saves keys and value are byte arrays
+/// on disk. It allows for specifying how long each key-value pair should be
+/// kept for i.e. the time-to-live in seconds. If None is provided, they last indefinitely.
+///
+/// # Configuration
+///
+/// The Store has a number of configurations that are passed into the new() method
+///
+/// - `store_path` - required: The path to a directory where scdb should store its data
+/// - `max_keys` - default: 1 million: The maximum number of key-value pairs to store in store
+/// - `redundant_blocks` - default: 1: The store has an index to hold all the keys. This index is split
+///                                     into a fixed number of blocks basing on the virtual memory page size
+///                                     and the total number of keys to be held i.e. `max_keys`.
+///                                     Sometimes, there may be hash collision errors as the store's
+///                                     current stored keys approach `max_keys`. The closer it gets, the
+///                                     more it becomes likely see those errors. Adding redundant blocks
+///                                     helps mitigate this. Just be careful to not add too many (i.e. more than 2)
+///                                     since the higher the number of these blocks, the slower the store becomes.
+/// - `pool_capacity` - default: 5: The number of buffers to hold in memory as cache's for the store. Each buffer
+///                                 has the size equal to the virtual memory's page size, usually 4096 bytes.
+///                                 Increasing this number will speed this store up but of course, the machine
+///                                 has a limited RAM. When this number increases to a value that clogs the RAM, performance
+///                                 suddenly degrades, and keeps getting worse from there on.
+/// - `compaction_interval` - default 3600s (1 hour): The interval at which the store is compacted to remove dangling
+///                                                     keys. Dangling keys result from either getting expired or being deleted.
+///                                                     When a `delete` operation is done, the actual key-value pair
+///                                                     is just marked as `deleted` but is not removed.
+///                                                     Something similar happens when a key-value is updated.
+///                                                     A new key-value pair is created and the old one is left unindexed.
+///                                                     Compaction is important because it reclaims this space and reduces the size
+///                                                     of the database file.
+///
+/// # Examples
+///
+/// ```rust
+/// # use std::io;
+///
+/// # fn main() -> io::Result<()> {
+///     // Create the store. You can configure its `max_keys`, `redundant_blocks` etc.
+///     // The defaults are usable though.
+///     // One very important config is `max_keys`.
+///     // With it, you can limit the store size to a number of keys.
+///     // By default, the limit is 1 million keys
+///     let mut store = scdb::Store::new("db", // `store_path`
+///                             Some(1000), // `max_keys`
+///                             Some(1), // `redundant_blocks`
+///                             Some(10), // `pool_capacity`
+///                             Some(1800))?; // `compaction_interval`
+///     let key = b"foo";
+///     let value = b"bar";
+///
+///     // Insert key-value pair into the store with no time-to-live
+///     store.set(&key[..], &value[..], None)?;
+///     # assert_eq!(store.get(&key[..])?, Some(value.to_vec()));
+///
+///     // Or insert it with an optional time-to-live (ttl)
+///     // It will disappear from the store after `ttl` seconds
+///     store.set(&key[..], &value[..], Some(1))?;
+///     # assert_eq!(store.get(&key[..])?, Some(value.to_vec()));
+///
+///     // Getting the values by passing the key in bytes to store.get
+///     let value_in_store = store.get(&key[..])?;
+///     assert_eq!(value_in_store, Some(value.to_vec()));
+///
+///     // Updating the values is just like inserting them. Any key-value already in the store will
+///     // be overwritten
+///     store.set(&key[..], &value[..], None)?;
+///
+///     // Delete the key-value pair by supplying the key as an argument to store.delete
+///     store.delete(&key[..])?;
+///     assert_eq!(store.get(&key[..])?, None);
+///
+///     // Deleting all key-value pairs to start afresh, use store.clear()
+///     # store.set(&key[..], &value[..], None)?;
+///     store.clear()?;
+///     # assert_eq!(store.get(&key[..])?, None);
+///
+///     # Ok(())
+/// # }
+/// ```
 pub struct Store {
     buffer_pool: Arc<Mutex<BufferPool>>,
     header: DbFileHeader,
@@ -20,6 +102,21 @@ pub struct Store {
 
 impl Store {
     /// Creates a new store instance for the db found at `store_path`
+    ///
+    /// # Errors
+    ///
+    /// It may fail with [std::io::Error] if it can find the write to the `store_path` say due to permissions
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use scdb::Store;
+    ///
+    /// # fn main() -> std::io::Result<()> {
+    /// let store = Store::new("db", None, None, None, None)?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn new(
         store_path: &str,
         max_keys: Option<u64>,
@@ -54,6 +151,33 @@ impl Store {
     }
 
     /// Sets the given key value in the store
+    ///
+    /// This is used to insert or update any key-value pair in the store
+    ///
+    /// # Errors
+    ///
+    /// It may fail with [std::io::Error] in case the keys are maxed out i.e the store
+    /// has reached its capacity in terms of number of unexpired key-value keys it can hold
+    /// It may also fail with 'collision saturated' errors when the number of unexpired keys in the store
+    /// is almost reaching `max_keys`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use scdb::Store;
+    /// #
+    /// # fn main() -> std::io::Result<()> {
+    /// # let mut  store = Store::new("db", None, None, None, None)?;
+    /// // set a key-value pair that never expires
+    /// store.set(&b"foo"[..], &b"bar"[..], None)?;    ///
+    /// # assert_eq!(store.get(&b"foo"[..])?, Some(b"bar".to_vec()));
+    ///
+    /// // set a key-value pair that expires after 5 seconds
+    /// store.set(&b"foo2"[..], &b"bar2"[..], Some(5))?;
+    /// # assert_eq!(store.get(&b"foo2"[..])?, Some(b"bar2".to_vec()));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn set(&mut self, k: &[u8], v: &[u8], ttl: Option<u64>) -> io::Result<()> {
         let expiry = match ttl {
             None => 0u64,
@@ -89,6 +213,30 @@ impl Store {
     }
 
     /// Returns the value corresponding to the given key
+    ///
+    /// # Errors
+    ///
+    /// It may fail with [std::io::Error] in case it cannot access the database file say if it deleted
+    /// or due to permissions errors.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use scdb::Store;
+    /// #
+    /// # fn main() -> std::io::Result<()> {
+    /// # let mut  store = Store::new("db", None, None, None, None)?;
+    /// # store.set(&b"foo"[..], &b"bar"[..], None)?;
+    /// // if (b"foo", b"bar") exists,
+    /// // the value returned will be Some(b"bar")
+    /// let value = store.get(&b"foo"[..])?;
+    /// assert_eq!(value, Some(b"bar".to_vec()));
+    ///
+    /// // It returns None for non-existent keys or expired keys
+    /// assert_eq!(store.get(&b"foo2"[..])?, None);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn get(&mut self, k: &[u8]) -> io::Result<Option<Vec<u8>>> {
         let mut index_block = 0;
         let index_offset = self.header.get_index_offset(k);
@@ -118,6 +266,29 @@ impl Store {
     }
 
     /// Deletes the key-value for the given key
+    ///
+    /// # Errors
+    ///
+    /// It may fail with [std::io::Error] in case it cannot access the database file say if it deleted
+    /// or due to permissions errors.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use scdb::Store;
+    /// #
+    /// # fn main() -> std::io::Result<()> {
+    /// # let mut  store = Store::new("db", None, None, None, None)?;
+    /// # store.set(&b"foo"[..], &b"bar"[..], None)?;
+    /// // if (b"foo", b"bar") exists
+    /// assert_eq!(store.get(&b"foo"[..])?, Some(b"bar".to_vec()));
+    ///
+    /// // deleting it removes it from the store
+    /// store.delete(&b"foo"[..])?;
+    /// assert_eq!(store.get(&b"foo"[..])?, None);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn delete(&mut self, k: &[u8]) -> io::Result<()> {
         let mut index_block = 0;
         let index_offset = self.header.get_index_offset(k);
@@ -142,13 +313,69 @@ impl Store {
         Ok(())
     }
 
-    /// Clears the data in the file and the cache
+    /// Clears all data in the store
+    ///
+    /// # Errors
+    ///
+    /// It may fail with [std::io::Error] in case it cannot access the database file say if it deleted
+    /// or due to permissions errors.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use scdb::Store;
+    /// #
+    /// # fn main() -> std::io::Result<()> {
+    /// let mut  store = Store::new("db", None, None, None, None)?;
+    /// # store.set(&b"foo"[..], &b"bar"[..], None)?;
+    /// # store.set(&b"foo2"[..], &b"bar2"[..], None)?;
+    /// // if (b"foo", b"bar"), (b"foo2", b"bar2") exist
+    /// assert_eq!(store.get(&b"foo"[..])?, Some(b"bar".to_vec()));
+    /// assert_eq!(store.get(&b"foo2"[..])?, Some(b"bar2".to_vec()));
+    /// // clear removes everything from the store
+    /// store.clear()?;
+    /// assert_eq!(store.get(&b"foo"[..])?, None);
+    /// assert_eq!(store.get(&b"foo2"[..])?, None);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn clear(&mut self) -> io::Result<()> {
         let mut buffer_pool = acquire_lock!(self.buffer_pool)?;
         buffer_pool.clear_file()
     }
 
-    /// Compact the data in the file
+    /// Manually removes dangling key-value pairs in the database file
+    ///
+    /// Dangling keys result from either getting expired or being deleted.
+    /// When a `delete` operation is done, the actual key-value pair
+    /// is just marked as `deleted` but is not removed.
+    ///                                                     
+    /// Something similar happens when a key-value is updated.
+    /// A new key-value pair is created and the old one is left un-indexed.
+    /// Compaction is important because it reclaims this space and reduces the size
+    /// of the database file.
+    ///
+    /// This is done automatically for you at the set `compaction_interval` but you
+    /// may wish to do it manually for some reason.
+    ///
+    /// This is a very expensive operation so use it sparingly.
+    ///
+    /// # Errors
+    ///
+    /// It may fail with [std::io::Error] in case it cannot access the database file say if it deleted
+    /// or due to permissions errors.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use scdb::Store;
+    /// #
+    /// # fn main() -> std::io::Result<()> {
+    /// # let mut store = Store::new("db", None, None, None, None)?;
+    /// store.compact()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn compact(&mut self) -> io::Result<()> {
         let mut buffer_pool = acquire_lock!(self.buffer_pool)?;
         buffer_pool.compact_file()
