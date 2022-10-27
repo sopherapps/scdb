@@ -29,6 +29,7 @@ Of course to make it a little more appealing, it has some extra features like:
 Find the following documentation sites, depending on the programming language.
 
 - [rust scdb docs](https://docs.rs/scdb)
+- [python scdb docs](https://github.com/sopherapps/py_scdb)
 
 ## Quick Start
 
@@ -183,7 +184,7 @@ developed.
 Here are those that have been developed:
 
 - [x] [rust](https://crates.io/crates/scdb)
-- [ ] [python](TODO)
+- [x] [python](https://github.com/sopherapps/py_scdb)
 - [ ] [golang](TODO)
 - [ ] [c/c++](TODO)
 - [ ] [dotnet (C#, F#)](TODO)
