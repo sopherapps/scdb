@@ -273,6 +273,10 @@ compact                 time:   [28.984 ms 29.675 ms 30.401 ms]
 - A few ideas were picked from [redis](https://redis.io/) and [sqlite](https://www.sqlite.org/index.html) especially to
   do with the database file format.
 
+## License
+
+Copyright (c) 2022 [Martin Ahindura](https://github.com/Tinitto) Licensed under the [MIT License](./LICENSE)
+
 ## Gratitude
 
 > "For My Father’s will is that everyone who looks to the Son and believes in Him shall have eternal life, and I will
@@ -282,7 +286,5 @@ compact                 time:   [28.984 ms 29.675 ms 30.401 ms]
 
 All glory be to God.
 
-## License
-
-Copyright (c) 2022 [Martin Ahindura](https://github.com/Tinitto) Licensed under the [MIT License](./LICENSE)
+<a href="https://www.buymeacoffee.com/martinahinJ" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
