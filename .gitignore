@@ -4,3 +4,4 @@
 db/
 *.scdb
 testdb/
+set_testdb/

@@ -1,6 +1,6 @@
+use crate::internal::entries::key_value::{KeyValueEntry, OFFSET_FOR_KEY_IN_KV_ARRAY};
 use crate::internal::macros::validate_bounds;
 use crate::internal::utils::TRUE_AS_BYTE;
-use crate::internal::KeyValueEntry;
 use std::cmp::min;
 use std::fmt::{Display, Formatter};
 use std::io;
@@ -26,6 +26,7 @@ pub(crate) struct Buffer {
 
 impl Buffer {
     /// Creates a new Buffer with the given left_offset
+    /// FIXME: ADD TEST FOR THIS
     #[inline]
     pub(crate) fn new(left_offset: u64, data: &[u8], capacity: usize) -> Self {
         let upper_bound = min(data.len(), capacity);
@@ -123,11 +124,14 @@ impl Buffer {
     pub(crate) fn addr_belongs_to_key(&self, address: u64, key: &[u8]) -> io::Result<bool> {
         let key_size = key.len();
         validate_bounds!(
-            (address, address + key_size as u64 + 8),
+            (
+                address,
+                address + key_size as u64 + OFFSET_FOR_KEY_IN_KV_ARRAY as u64
+            ),
             (self.left_offset, self.right_offset),
             "address out of bounds"
         )?;
-        let key_offset = (address - self.left_offset) as usize + 8;
+        let key_offset = (address - self.left_offset) as usize + OFFSET_FOR_KEY_IN_KV_ARRAY;
         let key_in_data = &self.data[key_offset..key_offset + key_size];
         Ok(key_in_data == key)
     }
@@ -142,11 +146,14 @@ impl Buffer {
     ) -> io::Result<Option<()>> {
         let key_size = key.len();
         validate_bounds!(
-            (address, address + key_size as u64 + 8),
+            (
+                address,
+                address + key_size as u64 + OFFSET_FOR_KEY_IN_KV_ARRAY as u64
+            ),
             (self.left_offset, self.right_offset),
             "address out of bounds"
         )?;
-        let key_offset = (address - self.left_offset) as usize + 8;
+        let key_offset = (address - self.left_offset) as usize + OFFSET_FOR_KEY_IN_KV_ARRAY;
         let key_in_data = &self.data[key_offset..key_offset + key_size];
         if key_in_data == key {
             let is_deleted_offset = key_offset + key_size;

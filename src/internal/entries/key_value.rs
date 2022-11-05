@@ -6,6 +6,7 @@ use std::fmt::Debug;
 use std::io;
 
 pub(crate) const KEY_VALUE_MIN_SIZE_IN_BYTES: u32 = 4 + 4 + 8 + 1;
+pub(crate) const OFFSET_FOR_KEY_IN_KV_ARRAY: usize = 8;
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct KeyValueEntry<'a> {

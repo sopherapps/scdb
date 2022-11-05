@@ -1,7 +1,7 @@
 use crate::internal::buffers::buffer::{Buffer, Value};
 use crate::internal::entries::db_file_header::HEADER_SIZE_IN_BYTES;
 use crate::internal::entries::index::Index;
-use crate::internal::entries::key_value::KEY_VALUE_MIN_SIZE_IN_BYTES;
+use crate::internal::entries::key_value::OFFSET_FOR_KEY_IN_KV_ARRAY;
 use crate::internal::macros::validate_bounds;
 use crate::internal::utils::{get_vm_page_size, TRUE_AS_BYTE};
 use crate::internal::{
@@ -39,8 +39,6 @@ pub(crate) struct BufferPool {
     pub(crate) file_size: u64,
 }
 
-const OFFSET_FOR_KEY_IN_KV_ARRAY: usize = 8;
-
 impl BufferPool {
     /// Creates a new BufferPool with the given `capacity` number of Buffers and
     /// for the file at the given path (creating it if necessary)
@@ -51,8 +49,6 @@ impl BufferPool {
         redundant_blocks: Option<u16>,
         buffer_size: Option<usize>,
     ) -> io::Result<Self> {
-        // let max_keys = max_keys.unwrap_or(1_000_000);
-        // let redundant_blocks = redundant_blocks.unwrap_or(1);
         let buffer_size = buffer_size.unwrap_or(get_vm_page_size() as usize);
         let capacity = capacity.unwrap_or(DEFAULT_POOL_CAPACITY);
 
@@ -274,7 +270,7 @@ impl BufferPool {
         key: &[u8],
     ) -> io::Result<Option<()>> {
         let key_size = key.len();
-        let addr_for_is_deleted = kv_address + 8 + key_size as u64;
+        let addr_for_is_deleted = kv_address + OFFSET_FOR_KEY_IN_KV_ARRAY as u64 + key_size as u64;
         // loop in reverse, starting at the back
         // since the latest kv_buffers are the ones updated when new changes occur
         for buf in self.kv_buffers.iter_mut().rev() {
@@ -418,12 +414,11 @@ fn extract_key_as_byte_array_from_file(
     kv_address: u64,
     key_size: usize,
 ) -> io::Result<Vec<u8>> {
-    let buf_size = KEY_VALUE_MIN_SIZE_IN_BYTES as usize + key_size;
-    let mut buf: Vec<u8> = vec![0; buf_size];
-    file.seek(SeekFrom::Start(kv_address))?;
+    let offset = kv_address + OFFSET_FOR_KEY_IN_KV_ARRAY as u64;
+    let mut buf: Vec<u8> = vec![0; key_size];
+    file.seek(SeekFrom::Start(offset))?;
     file.read_exact(&mut buf)?;
-    let key = buf[OFFSET_FOR_KEY_IN_KV_ARRAY..OFFSET_FOR_KEY_IN_KV_ARRAY + key_size].to_vec();
-    Ok(key)
+    Ok(buf)
 }
 
 /// Computes the capacity (i.e. number of buffers) of the buffers to be set aside for index buffers
@@ -563,7 +558,6 @@ mod tests {
             assert_eq!(&got.max_keys, &expected.max_keys);
             assert_eq!(&got.redundant_blocks, &expected.redundant_blocks);
             assert_eq!(&got.file_path, &expected.file_path);
-            assert_eq!(&got.buffer_size, &expected.buffer_size);
             assert_eq!(&got.file_size, &expected.file_size);
 
             // delete the file so that BufferPool::new() can reinitialize it for the next iteration
@@ -1070,7 +1064,7 @@ mod tests {
 
         let resp = pool
             .try_delete_kv_entry(kv1_index_address, &kv1.key)
-            .expect("try delete kv1 with kv2 key");
+            .expect("try delete kv1 with kv1 key");
         assert!(resp.is_some());
         assert_eq!(
             pool.get_value(kv1_index_address, &kv1.key).unwrap(),

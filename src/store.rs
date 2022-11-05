@@ -226,7 +226,7 @@ impl Store {
     /// # use scdb::Store;
     /// #
     /// # fn main() -> std::io::Result<()> {
-    /// # let mut  store = Store::new("db", None, None, None, None)?;
+    /// # let mut  store = Store::new("set_testdb", None, None, None, None)?;
     /// # store.set(&b"foo"[..], &b"bar"[..], None)?;
     /// // if (b"foo", b"bar") exists,
     /// // the value returned will be Some(b"bar")
