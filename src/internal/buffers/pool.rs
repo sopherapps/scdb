@@ -179,7 +179,7 @@ impl BufferPool {
 
             let len = index_block.len();
             let mut idx_block_cursor: usize = 0;
-            while idx_offset < len as u64 {
+            while idx_block_cursor < len {
                 let lower = idx_block_cursor;
                 let upper = lower + idx_entry_size;
                 let idx_bytes = index_block[lower..upper].to_vec();
