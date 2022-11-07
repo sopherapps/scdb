@@ -732,7 +732,7 @@ mod tests {
         let original_file_size = get_file_size(&db_file_path);
 
         // wait for some keys to expire
-        thread::sleep(Duration::from_secs(3));
+        thread::sleep(Duration::from_secs(4));
 
         // store.compact().expect("compact store");
 
