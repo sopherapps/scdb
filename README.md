@@ -185,11 +185,7 @@ Here are those that have been developed:
 
 - [x] [rust](https://crates.io/crates/scdb)
 - [x] [python](https://github.com/sopherapps/py_scdb)
-- [ ] [golang](TODO)
-- [ ] [c/c++](TODO)
-- [ ] [dotnet (C#, F#)](TODO)
-- [ ] [java](TODO)
-- [ ] [nodejs](TODO)
+- [x] [golang](https://github.com/sopherapps/go-scdb)
 
 ### TODO:
 
