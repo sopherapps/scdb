@@ -12,6 +12,7 @@ use crate::internal::{
 };
 
 const DEFAULT_DB_FILE: &str = "dump.scdb";
+const ZERO_U64_BYTES: [u8; 8] = 0u64.to_be_bytes();
 
 /// A key-value store that persists key-value pairs to disk
 ///
@@ -248,9 +249,10 @@ impl Store {
                 .header
                 .get_index_offset_in_nth_block(index_offset, index_block)?;
             let kv_offset_in_bytes = buffer_pool.read_index(index_offset)?;
-            let entry_offset = u64::from_be_bytes(slice_to_array(&kv_offset_in_bytes)?);
 
-            if entry_offset != 0 {
+            if kv_offset_in_bytes != ZERO_U64_BYTES {
+                let entry_offset = u64::from_be_bytes(slice_to_array(&kv_offset_in_bytes)?);
+
                 if let Some(v) = buffer_pool.get_value(entry_offset, k)? {
                     return if v.is_stale {
                         Ok(None)
@@ -300,9 +302,10 @@ impl Store {
                 .header
                 .get_index_offset_in_nth_block(index_offset, index_block)?;
             let kv_offset_in_bytes = buffer_pool.read_index(index_offset)?;
-            let entry_offset = u64::from_be_bytes(slice_to_array(&kv_offset_in_bytes)?);
 
-            if entry_offset != 0 {
+            if kv_offset_in_bytes != ZERO_U64_BYTES {
+                let entry_offset = u64::from_be_bytes(slice_to_array(&kv_offset_in_bytes)?);
+
                 if let Some(()) = buffer_pool.try_delete_kv_entry(entry_offset, k)? {
                     return Ok(());
                 }
