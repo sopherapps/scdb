@@ -4,7 +4,7 @@
 
 A very simple and fast key-value store but persisting data to disk, with a "localStorage-like" API.
 
-**scdb may not be production-ready yet. It works, quite well but it requires more vigorous testing.**
+**scdb may not be production-ready yet. It works, quite well but it requires more rigorous testing.**
 
 ## Purpose
 
