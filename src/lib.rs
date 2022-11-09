@@ -28,7 +28,7 @@ First add `scdb` to your dependencies in your project's `Cargo.toml`.
 
 ```toml
 [dependencies]
-regex = "0.0.1" # or any available version you wish to use
+scdb = "0.0.1" # or any available version you wish to use
 ```
 
 Next:
