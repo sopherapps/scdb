@@ -13,17 +13,11 @@ fn setting_without_ttl_benchmark(c: &mut Criterion) {
     store.clear().expect("clear store");
     let records = get_records();
     for (k, v) in &records {
+        let k = k.clone();
+        let v = v.clone();
         c.bench_function(
             &format!("set(no ttl): '{}'", String::from_utf8(k.clone()).unwrap(),),
-            |b| {
-                b.iter_with_large_drop(|| {
-                    store.set(
-                        black_box(&k.clone()),
-                        black_box(&v.clone()),
-                        black_box(None),
-                    )
-                })
-            },
+            |b| b.iter_with_large_drop(|| store.set(black_box(&k), black_box(&v), black_box(None))),
         );
     }
 }
@@ -34,13 +28,11 @@ fn setting_with_ttl_benchmark(c: &mut Criterion) {
     let ttl = Some(3_600u64);
     let records = get_records();
     for (k, v) in &records {
+        let k = k.clone();
+        let v = v.clone();
         c.bench_function(
             &format!("set(ttl): '{}'", String::from_utf8(k.clone()).unwrap(),),
-            |b| {
-                b.iter_with_large_drop(|| {
-                    store.set(black_box(&k.clone()), black_box(&v.clone()), black_box(ttl))
-                })
-            },
+            |b| b.iter_with_large_drop(|| store.set(black_box(&k), black_box(&v), black_box(ttl))),
         );
     }
 }
