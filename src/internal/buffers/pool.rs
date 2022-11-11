@@ -297,7 +297,12 @@ impl BufferPool {
     /// This avoids duplicate entries for the same key being tracked in separate index entries
     ///
     /// It also returns false if the address goes beyond the size of the file
-    pub(crate) fn addr_belongs_to_key(&mut self, kv_address: u64, key: &[u8]) -> io::Result<bool> {
+    pub(crate) fn addr_belongs_to_key(
+        &mut self,
+        kv_address: &[u8],
+        key: &[u8],
+    ) -> io::Result<bool> {
+        let kv_address = u64::from_be_bytes(slice_to_array(kv_address)?);
         if kv_address >= self.file_size {
             return Ok(false);
         }
@@ -975,19 +980,19 @@ mod tests {
         insert_key_value_entry(&mut pool, &header, &kv1);
         insert_key_value_entry(&mut pool, &header, &kv2);
 
-        let kv1_index_address = get_kv_address(&mut pool, &header, &kv1);
-        let kv2_index_address = get_kv_address(&mut pool, &header, &kv2);
+        let kv1_index_address = get_kv_address_as_bytes(&mut pool, &header, &kv1);
+        let kv2_index_address = get_kv_address_as_bytes(&mut pool, &header, &kv2);
         assert!(pool
-            .addr_belongs_to_key(kv1_index_address, kv1.key)
+            .addr_belongs_to_key(&kv1_index_address, kv1.key)
             .expect("addr_belongs_to_key kv1"));
         assert!(pool
-            .addr_belongs_to_key(kv2_index_address, kv2.key)
+            .addr_belongs_to_key(&kv2_index_address, kv2.key)
             .expect("addr_belongs_to_key kv2"));
         assert!(!pool
-            .addr_belongs_to_key(kv1_index_address, kv2.key)
+            .addr_belongs_to_key(&kv1_index_address, kv2.key)
             .expect("addr_belongs_to_key kv1"));
         assert!(!pool
-            .addr_belongs_to_key(kv2_index_address, kv1.key)
+            .addr_belongs_to_key(&kv2_index_address, kv1.key)
             .expect("addr_belongs_to_key kv2"));
 
         fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
@@ -1005,10 +1010,10 @@ mod tests {
         let header = DbFileHeader::from_file(&mut pool.file).expect("get header");
 
         insert_key_value_entry(&mut pool, &header, &kv);
-        let kv_index_address = get_kv_address(&mut pool, &header, &kv);
+        let kv_index_address = get_kv_address_as_bytes(&mut pool, &header, &kv);
 
         assert!(pool
-            .addr_belongs_to_key(kv_index_address, kv.key)
+            .addr_belongs_to_key(&kv_index_address, kv.key)
             .expect("addr_belongs_to_key kv"));
 
         fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
@@ -1026,9 +1031,10 @@ mod tests {
 
         insert_key_value_entry(&mut pool, &header, &kv);
         let file_size = get_actual_file_size(file_name);
+        let file_size = file_size.to_be_bytes();
 
         assert!(!pool
-            .addr_belongs_to_key(file_size, kv.key)
+            .addr_belongs_to_key(&file_size, kv.key)
             .expect("addr_belongs_to_key kv"));
 
         fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
@@ -1228,8 +1234,12 @@ mod tests {
         }
     }
 
-    /// Returns the address for the given key value entry within the buffer pool
-    fn get_kv_address(pool: &mut BufferPool, header: &DbFileHeader, kv: &KeyValueEntry<'_>) -> u64 {
+    /// Returns the address byte array for the given key value entry within the buffer pool
+    fn get_kv_address_as_bytes(
+        pool: &mut BufferPool,
+        header: &DbFileHeader,
+        kv: &KeyValueEntry<'_>,
+    ) -> Vec<u8> {
         let mut kv_address = vec![0u8; INDEX_ENTRY_SIZE_IN_BYTES as usize];
         let index_address = header.get_index_offset(kv.key);
 
@@ -1240,6 +1250,12 @@ mod tests {
             .read(&mut kv_address)
             .expect("reads value at index address");
 
+        kv_address
+    }
+
+    /// Returns the address for the given key value entry within the buffer pool
+    fn get_kv_address(pool: &mut BufferPool, header: &DbFileHeader, kv: &KeyValueEntry<'_>) -> u64 {
+        let kv_address = get_kv_address_as_bytes(pool, header, kv);
         u64::from_be_bytes(slice_to_array(&kv_address[..]).expect("slice to array"))
     }
 }

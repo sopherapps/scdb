@@ -195,9 +195,10 @@ impl Store {
                 .header
                 .get_index_offset_in_nth_block(index_offset, index_block)?;
             let kv_offset_in_bytes = buffer_pool.read_index(index_offset)?;
-            let entry_offset = u64::from_be_bytes(slice_to_array(&kv_offset_in_bytes)?);
 
-            if entry_offset == 0 || buffer_pool.addr_belongs_to_key(entry_offset, k)? {
+            if kv_offset_in_bytes == ZERO_U64_BYTES
+                || buffer_pool.addr_belongs_to_key(&kv_offset_in_bytes, k)?
+            {
                 let kv = KeyValueEntry::new(k, v, expiry);
                 let mut kv_bytes = kv.as_bytes();
                 let prev_last_offset = buffer_pool.append(&mut kv_bytes)?;
