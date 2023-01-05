@@ -12,7 +12,6 @@ There are six main operations
 - This creates the database file if it does not exist
     - adds the 100-byte header basing on user configuration and default values
     - adds the placeholders for the index blocks, each item pre-initialized with a zero.
-- It then memory maps the entire database file
 - And loads the derived and non-derived properties like 'max_keys', 'block_size', 'redundant_blocks',
   'number_of_index_blocks' (`(max_keys / number_of_items_per_index_block).ceil() + redundant_blocks`),
   'number_of_items_per_index_block' (`(block_size / 8).floor()`),
@@ -21,7 +20,7 @@ There are six main operations
 
 #### 2. Set
 
-1. The key supplied is run through a hashfunction with modulo `number_of_items_per_index_block`
+1. The key supplied is run through a hash function with modulo `number_of_items_per_index_block`
    and answer multiplied by 8 to get the byte offset. Let the hashed value be `hash`
 2. Set `index_block_offset` to zero to start from the first block.
 3. The `index_address` is set to `index_block_offset + 100 + hash`.
@@ -32,7 +31,7 @@ There are six main operations
       , `value`, `deleted`) is appended to the end of the file at offset `last_offset`
     - the `last_offset` is then inserted at `index_address` in place of the zero
     - the `last_offset` header is then updated
-      to `last_offset + get_size_of_kv(kv)` [get_size_of_kv gets the total size of the entry in bits]
+      to `last_offset + get_size_of_kv(kv)` [get_size_of_kv gets the total size of the entry in bytes]
 6. If this `key_value_offset` is non-zero, it is possible that the value for that key has already been set.
     - retrieve the key at the given `key_value_offset`. (Do note that there is a 4-byte number `size` before the
       key. That number gives the size of the key-value entry).
@@ -68,7 +67,7 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
 
 #### 3. Delete
 
-1. The key supplied is run through a hashfunction with modulo `number_of_items_per_index_block`
+1. The key supplied is run through a hash function with modulo `number_of_items_per_index_block`
    and answer multiplied by 8 to get the byte offset. Let the hashed value be `hash`.
 2. Set `index_block_offset` to zero to start from the first block.
 3. The `index_address` is set to `index_block_offset + 100 + hash`.
@@ -94,7 +93,7 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
 
 #### 4. Get
 
-1. The key supplied is run through a hashfunction with modulo `number_of_items_per_index_block`
+1. The key supplied is run through a hash function with modulo `number_of_items_per_index_block`
    and answer multiplied by 8 to get the byte offset. Let the hashed value be `hash`.
 2. Set `index_block_offset` to zero to start from the first block.
 3. The `index_address` is set to `index_block_offset + 100 + hash`.
@@ -122,8 +121,8 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
 
 #### 5. Compact
 
-Compaction can run automatically every few hours. During that time, the database would be locked.
-No read, nor write would be allowed. It can also be requested for by the user.
+Compaction can run automatically every few hours. During that time, the database would be locked. No read, nor write
+would be allowed. Compaction can also be started by the user.
 
 1. Create new file
 2. Copy header into the new file
@@ -161,10 +160,8 @@ Clear the entire database.
 
 ##### Performance
 
-- Time complexity: This operation is O(1) where k is the `number_of_index_blocks` and N is the number of keys in the
-  file before
-  compaction.
-- Auxiliary space: This operation is O(m) where m is the size of the header i.e. 100.
+- Time complexity: This operation is O(1).
+- Auxiliary space: This operation is O(1).
 
 ### Optimizations
 
