@@ -8,7 +8,7 @@ use clokwerk::{ScheduleHandle, Scheduler, TimeUnits};
 
 use crate::internal::{
     acquire_lock, get_current_timestamp, initialize_db_folder, slice_to_array, BufferPool,
-    DbFileHeader, KeyValueEntry, SearchIndex,
+    DbFileHeader, Header, KeyValueEntry, SearchIndex,
 };
 
 const DEFAULT_DB_FILE: &str = "dump.scdb";
@@ -48,7 +48,7 @@ const ZERO_U64_BYTES: [u8; 8] = 0u64.to_be_bytes();
 ///                                                     A new key-value pair is created and the old one is left unindexed.
 ///                                                     Compaction is important because it reclaims this space and reduces the size
 ///                                                     of the database file.
-/// - `max_search_index_key_length` - default 3: The maximum number of characters in the each key in the search inverted index
+/// - `max_index_key_len` - default 3: The maximum number of characters in the each key in the search inverted index
 ///                                             The inverted index is used for full-text search of keys to get all key-values
 ///                                             whose keys start with a given byte array.
 ///
@@ -68,7 +68,7 @@ const ZERO_U64_BYTES: [u8; 8] = 0u64.to_be_bytes();
 ///                             Some(1), // `redundant_blocks`
 ///                             Some(10), // `pool_capacity`
 ///                             Some(1800),// `compaction_interval`
-///                             Some(3))?; // `max_search_index_key_length`
+///                             Some(3))?; // `max_index_key_len`
 ///     let key = b"foo";
 ///     let value = b"bar";
 ///
@@ -131,7 +131,7 @@ impl Store {
         redundant_blocks: Option<u16>,
         pool_capacity: Option<usize>,
         compaction_interval: Option<u32>,
-        max_search_index_key_length: Option<usize>,
+        max_search_index_key_length: Option<u32>,
     ) -> io::Result<Self> {
         let db_folder = Path::new(store_path);
         let db_file_path = db_folder.join(DEFAULT_DB_FILE);
@@ -146,6 +146,7 @@ impl Store {
             redundant_blocks,
             None,
         )?;
+
         let search_index = SearchIndex::new(
             &search_idx_file_path,
             max_search_index_key_length,
@@ -527,7 +528,6 @@ fn extract_header_from_buffer_pool(buffer_pool: &mut BufferPool) -> io::Result<D
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use std::fs::OpenOptions;
     use std::io::{Seek, SeekFrom};
     use std::{fs, io, thread};

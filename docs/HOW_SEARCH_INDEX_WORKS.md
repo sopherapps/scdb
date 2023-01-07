@@ -47,7 +47,8 @@ There are six main operations
 - This creates the search index file if it does not exist
     - adds the 100-byte header basing on user configuration and default values
     - adds the placeholders for the index blocks, each item pre-initialized with a zero.
-- And loads the derived and non-derived properties like 'max_keys', 'max_key_chars', 'block_size', 'redundant_blocks',
+- And loads the derived and non-derived properties like 'max_keys', 'max_index_key_len', 'block_size', '
+  redundant_blocks',
   'number_of_index_blocks' (`(max_keys / number_of_items_per_index_block).ceil() + redundant_blocks`),
   'number_of_items_per_index_block' (`(block_size / 8).floor()`),
   'values_start_point' (`100 + (net_block_size * number_of_index_blocks)`),
@@ -80,7 +81,7 @@ There are six main operations
       i. If the `db_key` of the current value entry is equal to the key that is to be added:
         - set the new data from the db into the current value entry i.e. new `expiry` and the new `db_offset`.
         - increment `n` by 1
-            - if `n` is greater than `max_key_chars`, stop the iteration and exit.
+            - if `n` is greater than `max_index_key_len`, stop the iteration and exit.
             - else go back to step 1 ii. Else if the `db_key` is not equal to the key being added
         - if the `next_offset` is equal to the `root_value_offset`, append the new value to the end of this list i.e.
             - Append the value entry (with all its data including `key_size`, `expiry` (got from ttl from user)
@@ -107,11 +108,11 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
 
 - Time complexity: This operation is O(km+n) where:
     - k = `number_of_index_blocks`
-    - m = `max_key_chars`
+    - m = `max_index_key_len`
     - n = length of the longest linked list of values accessed.
 - Auxiliary Space: This operation is O(km+n) where:
     - n = length of the longest `db_key` in the linked list of values accessed.
-    - m = `max_key_chars`.
+    - m = `max_index_key_len`.
     - k = `number_of_index_blocks`. If the hash for the given prefix already has offsets associated with it, each will
       be allocated in memory thus `km`.
 
@@ -156,17 +157,17 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
             - set the value at `index_address` to `next_offset`
         - if `value_offset` equals `root_value_offset`
             - set the value at `index_address` to 0 i.e. reset it
-        - increment `n` by 1
-        - if `n` is greater than `max_key_chars`, exit
-        - else go back to step 1 iii. else if `db_key` is not equal to the key passed:
-            - if `next_offset` equals `root_value_offset`:
-                - increment `n` by 1:
-                - if `n` is greater than `max_key_chars`, exit
-                - else go back to step 1
-            - else:
-                - set the `value_offset` to `next_offset`
-                - read the value at the `value_offset`. This is the `current_value`.
-                - go back to step (i)
+      - increment `n` by 1
+      - if `n` is greater than `max_index_key_len`, exit
+      - else go back to step 1 iii. else if `db_key` is not equal to the key passed:
+          - if `next_offset` equals `root_value_offset`:
+              - increment `n` by 1:
+              - if `n` is greater than `max_index_key_len`, exit
+              - else go back to step 1
+          - else:
+              - set the `value_offset` to `next_offset`
+              - read the value at the `value_offset`. This is the `current_value`.
+              - go back to step (i)
     - else increment the `index_block_offset` by `net_block_size`
         - if the new `index_block_offset` is equal to or greater than the `values_start_point`, raise
           the `CollisionSaturatedError` error. We have run out of blocks without getting a free slot to add the value
@@ -177,16 +178,16 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
 
 - Time complexity: This operation is O(km+n) where:
     - k = `number_of_index_blocks`
-    - m = `max_key_chars`
+    - m = `max_index_key_len`
     - n = length of the longest linked list of values accessed.
 - Auxiliary space: This operation is O(km+n) where:
     - k = `number_of_index_blocks`
-    - m = `max_key_chars`
+    - m = `max_index_key_len`
     - n = length of the longest `db_key` in the linked list of values accessed.
 
 ### 4. Search
 
-1. Get the lower of the two values: length of the `search_term` and the `max_key_chars`. Let it be `n`.
+1. Get the lower of the two values: length of the `search_term` and the `max_index_key_len`. Let it be `n`.
 2. Get the prefix i.e. the first `n` characters/runes of the `search_term`
 3. The prefix is run through a hash function with modulo `number_of_items_per_index_block`
    and answer multiplied by 8 to get the byte offset. Let the hashed value be `hash`.

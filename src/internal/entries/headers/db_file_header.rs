@@ -1,11 +1,11 @@
-use crate::internal::{get_hash, utils};
+use crate::internal;
+use crate::internal::entries::headers::shared::{
+    DerivedHeaderProps, Header, DEFAULT_DB_MAX_KEYS, DEFAULT_DB_REDUNDANT_BLOCKS,
+    HEADER_SIZE_IN_BYTES,
+};
+use crate::internal::utils;
 use std::fmt::{Display, Formatter};
-use std::fs::File;
 use std::io;
-use std::io::{Read, Seek, SeekFrom};
-
-pub(crate) const INDEX_ENTRY_SIZE_IN_BYTES: u64 = 8;
-pub(crate) const HEADER_SIZE_IN_BYTES: u64 = 100;
 
 #[derive(Debug, PartialEq, Clone, Eq, Ord, PartialOrd)]
 pub(crate) struct DbFileHeader {
@@ -26,39 +26,42 @@ impl DbFileHeader {
         redundant_blocks: Option<u16>,
         block_size: Option<u32>,
     ) -> Self {
-        let max_keys = max_keys.unwrap_or(1_000_000);
-        let redundant_blocks = redundant_blocks.unwrap_or(1);
+        let max_keys = max_keys.unwrap_or(DEFAULT_DB_MAX_KEYS);
+        let redundant_blocks = redundant_blocks.unwrap_or(DEFAULT_DB_REDUNDANT_BLOCKS);
         let block_size = block_size.unwrap_or_else(utils::get_vm_page_size);
+        let derived_props = DerivedHeaderProps::new(block_size, max_keys, redundant_blocks);
         let mut header = Self {
             title: "Scdb versn 0.001".to_string(),
             block_size,
             max_keys,
             redundant_blocks,
-            items_per_index_block: 0,
-            number_of_index_blocks: 0,
-            key_values_start_point: 0,
-            net_block_size: 0,
+            items_per_index_block: derived_props.items_per_index_block,
+            number_of_index_blocks: derived_props.number_of_index_blocks,
+            key_values_start_point: derived_props.values_start_point,
+            net_block_size: derived_props.net_block_size,
         };
 
-        header.update_derived_props();
         header
     }
+}
 
-    /// Computes the properties that depend on the user-defined/default properties and update them
-    /// on self
-    fn update_derived_props(&mut self) {
-        self.items_per_index_block =
-            (self.block_size as f64 / INDEX_ENTRY_SIZE_IN_BYTES as f64).floor() as u64;
-        self.number_of_index_blocks = (self.max_keys as f64 / self.items_per_index_block as f64)
-            .ceil() as u64
-            + self.redundant_blocks as u64;
-        self.net_block_size = self.items_per_index_block * INDEX_ENTRY_SIZE_IN_BYTES;
-        self.key_values_start_point =
-            HEADER_SIZE_IN_BYTES + (self.net_block_size * self.number_of_index_blocks);
+impl Header for DbFileHeader {
+    #[inline(always)]
+    fn get_items_per_index_block(&self) -> u64 {
+        self.items_per_index_block
     }
 
-    /// Retrieves the byte array that represents the header.
-    pub(crate) fn as_bytes(&self) -> Vec<u8> {
+    #[inline(always)]
+    fn get_number_of_index_blocks(&self) -> u64 {
+        self.number_of_index_blocks
+    }
+
+    #[inline(always)]
+    fn get_net_block_size(&self) -> u64 {
+        self.net_block_size
+    }
+
+    fn as_bytes(&self) -> Vec<u8> {
         self.title
             .as_bytes()
             .iter()
@@ -70,8 +73,7 @@ impl DbFileHeader {
             .collect()
     }
 
-    /// Extracts the header from the data array
-    pub(crate) fn from_data_array(data: &[u8]) -> io::Result<Self> {
+    fn from_data_array(data: &[u8]) -> io::Result<Self> {
         if data.len() < HEADER_SIZE_IN_BYTES as usize {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -84,70 +86,23 @@ impl DbFileHeader {
 
         let title = String::from_utf8(data[0..16].to_owned())
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        let block_size = u32::from_be_bytes(utils::slice_to_array::<4>(&data[16..20])?);
-        let max_keys = u64::from_be_bytes(utils::slice_to_array::<8>(&data[20..28])?);
-        let redundant_blocks = u16::from_be_bytes(utils::slice_to_array::<2>(&data[28..30])?);
+        let block_size = u32::from_be_bytes(internal::slice_to_array::<4>(&data[16..20])?);
+        let max_keys = u64::from_be_bytes(internal::slice_to_array::<8>(&data[20..28])?);
+        let redundant_blocks = u16::from_be_bytes(internal::slice_to_array::<2>(&data[28..30])?);
+        let derived_props = DerivedHeaderProps::new(block_size, max_keys, redundant_blocks);
 
         let mut header = Self {
             title,
             block_size,
             max_keys,
             redundant_blocks,
-            items_per_index_block: 0,
-            number_of_index_blocks: 0,
-            key_values_start_point: 0,
-            net_block_size: 0,
+            items_per_index_block: derived_props.items_per_index_block,
+            number_of_index_blocks: derived_props.number_of_index_blocks,
+            key_values_start_point: derived_props.values_start_point,
+            net_block_size: derived_props.net_block_size,
         };
 
-        header.update_derived_props();
         Ok(header)
-    }
-
-    /// Extracts the header from a database file
-    pub(crate) fn from_file(file: &mut File) -> io::Result<Self> {
-        file.seek(SeekFrom::Start(0))?;
-        let mut buf = [0u8; HEADER_SIZE_IN_BYTES as usize];
-        let data_len = file.read(&mut buf)?;
-        if data_len < HEADER_SIZE_IN_BYTES as usize {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "data should be at least {} bytes in length",
-                    HEADER_SIZE_IN_BYTES
-                ),
-            ));
-        }
-
-        Self::from_data_array(&buf)
-    }
-
-    /// Computes the offset for the given key in the first index block.
-    /// It uses the meta data in this header
-    /// i.e. number of items per block and the `INDEX_ENTRY_SIZE_IN_BYTES`
-    pub(crate) fn get_index_offset(&self, key: &[u8]) -> u64 {
-        let hash = get_hash(key, self.items_per_index_block);
-        HEADER_SIZE_IN_BYTES + (hash * INDEX_ENTRY_SIZE_IN_BYTES)
-    }
-
-    /// Returns the index offset for the nth index block if `initial_offset` is the offset
-    /// in the top most index block
-    /// `n` starts at zero where zero is the top most index block
-    pub(crate) fn get_index_offset_in_nth_block(
-        &self,
-        initial_offset: u64,
-        n: u64,
-    ) -> io::Result<u64> {
-        if n >= self.number_of_index_blocks {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "block {} out of bounds of {} blocks",
-                    n, self.number_of_index_blocks
-                ),
-            ));
-        }
-
-        Ok(initial_offset + (self.net_block_size * n))
     }
 }
 
@@ -167,13 +122,15 @@ impl Display for DbFileHeader {
 
 #[cfg(test)]
 mod tests {
-    use crate::internal::entries::db_file_header::{
-        DbFileHeader, HEADER_SIZE_IN_BYTES, INDEX_ENTRY_SIZE_IN_BYTES,
-    };
+    use super::*;
     use crate::internal::utils::get_vm_page_size;
     use std::fs::{File, OpenOptions};
     use std::io;
 
+    use crate::internal::entries::headers::header::Header;
+    use crate::internal::entries::headers::shared::{
+        Header, HEADER_SIZE_IN_BYTES, INDEX_ENTRY_SIZE_IN_BYTES,
+    };
     use serial_test::serial;
     use std::io::{Seek, SeekFrom, Write};
 

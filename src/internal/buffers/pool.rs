@@ -1,12 +1,10 @@
 use crate::internal::buffers::buffer::{Buffer, Value};
-use crate::internal::entries::db_file_header::HEADER_SIZE_IN_BYTES;
+use crate::internal::entries::headers::shared::{HEADER_SIZE_IN_BYTES, INDEX_ENTRY_SIZE_IN_BYTES};
 use crate::internal::entries::index::Index;
 use crate::internal::entries::key_value::OFFSET_FOR_KEY_IN_KV_ARRAY;
 use crate::internal::macros::validate_bounds;
 use crate::internal::utils::{get_vm_page_size, TRUE_AS_BYTE};
-use crate::internal::{
-    acquire_lock, slice_to_array, DbFileHeader, KeyValueEntry, INDEX_ENTRY_SIZE_IN_BYTES,
-};
+use crate::internal::{acquire_lock, slice_to_array, DbFileHeader, Header, KeyValueEntry};
 use std::cmp::{max, min};
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt::{Display, Formatter};

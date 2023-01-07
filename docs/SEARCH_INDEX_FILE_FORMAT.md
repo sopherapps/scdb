@@ -32,8 +32,8 @@ following features:
 |   16   |  4   | `block_size` - the database page size in bytes. Must be a power of two, as got in a similar way to how [page_size crate](https://docs.rs/page_size/latest/page_size/) does it. |
 |   20   |  8   |                                        `max_keys` - maximum number of keys (saved as a 4 byte number). Defaults to 1000,000 (1 million)                                        |
 |   28   |  2   |                    `redundant_blocks` - number of redundant index blocks to cater for where all index blocks are filled up for a given hash. Defaults to 1.                    |
-|   30   |  8   | `max_key_chars` - maximum number of characters (or runes) that each key of the inverted index should have. Defaults to 3                                                       |
-|   38   |  62  |                                                                     Reserved for expansion. Must be zero.                                                                      |
+|   30   |  4   | `max_index_key_len` - maximum number of characters (or runes) that each key of the inverted index should have. Defaults to 3                                                       |
+|   34   |  66  |                                                                     Reserved for expansion. Must be zero.                                                                      |
 
 - The index blocks each contain offsets where an offset is how far in bits from the start of the file that you will find
   the corresponding pseudo-root node of the doubly linked cyclic list of offsets that correspond to a key of the
