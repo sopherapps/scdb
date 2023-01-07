@@ -38,11 +38,11 @@ _ = map[string][]int{
 }
 ```
 
-### Operations
+## Operations
 
 There are six main operations
 
-#### 1. Initialization
+### 1. Initialization
 
 - This creates the search index file if it does not exist
     - adds the 100-byte header basing on user configuration and default values
@@ -53,7 +53,7 @@ There are six main operations
   'values_start_point' (`100 + (net_block_size * number_of_index_blocks)`),
   'net_block_size' (`number_of_items_per_index_block * 8`)
 
-#### 2. AddKeyOffset
+### 2. AddKeyOffset
 
 1. Get the prefix of the key passed, upto `n` characters. At the start `n` = 1.
 2. The prefix supplied is run through a hash function with modulo `number_of_items_per_index_block`
@@ -103,7 +103,7 @@ There are six main operations
 __Note: this uses a form of [separate chaining](https://www.geeksforgeeks.org/hashing-set-2-separate-chaining/) to
 handle hash collisions. Having multiple index blocks is a form of separate chaining__
 
-##### Performance
+#### Performance
 
 - Time complexity: This operation is O(km+n) where:
     - k = `number_of_index_blocks`
@@ -115,7 +115,7 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
     - k = `number_of_index_blocks`. If the hash for the given prefix already has offsets associated with it, each will
       be allocated in memory thus `km`.
 
-##### Caveats
+#### Caveats
 
 - There is a possibility that when one sets a given `index_key` or prefix, we may find all index blocks for the given
   hash already filled. We thus have to throw a `CollisionSaturatedError` and abort inserting the key. This means that
@@ -123,7 +123,7 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
   One possible remedy to this is to add a more redundant index block(s) i.e. increase `redundant_blocks`. Keep in mind
   that this consumes extra disk and memory space.
 
-#### 3. DeleteKeyOffset
+### 3. DeleteKeyOffset
 
 1. Get the prefix of the key passed, upto `n` characters. At the start `n` = 1.
 2. The prefix is run through a hash function with modulo `number_of_items_per_index_block`
@@ -173,7 +173,7 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
           entry.
         - else go back to step 4.
 
-##### Performance
+#### Performance
 
 - Time complexity: This operation is O(km+n) where:
     - k = `number_of_index_blocks`
@@ -184,7 +184,7 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
     - m = `max_key_chars`
     - n = length of the longest `db_key` in the linked list of values accessed.
 
-#### 4. Search
+### 4. Search
 
 1. Get the lower of the two values: length of the `search_term` and the `max_key_chars`. Let it be `n`.
 2. Get the prefix i.e. the first `n` characters/runes of the `search_term`
@@ -211,7 +211,7 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
         - else go back to step 5.
 8. Else return an empty list. No matches found.
 
-##### Performance
+#### Performance
 
 - Time complexity: This operation is O(kn) where:
     - k = `number_of_index_blocks`.
@@ -220,7 +220,7 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
     - k = `number_of_index_blocks`
     - n = length of the longest `db_key` in the linked list of values accessed.
 
-#### 5. Compact
+### 5. Compact
 
 Compaction can run automatically every few hours. During that time, the search would be locked. No read, nor write would
 be allowed. Compaction can also be started by the user.
@@ -287,7 +287,7 @@ be allowed. Compaction can also be started by the user.
 9. Delete the old file
 10. Rename the new file to the old file's name
 
-##### Performance
+#### Performance
 
 - Time complexity: This operation is O(kn) where:
     - k = number of prefixes in the file before compaction
@@ -296,7 +296,7 @@ be allowed. Compaction can also be started by the user.
     - k = `number_of_index_blocks` * `block_size`
     - n = length of the longest `db_key` in the linked list of values accessed.
 
-#### 6. Clear
+### 6. Clear
 
 Clear the entire database.
 
@@ -305,8 +305,17 @@ Clear the entire database.
 3. Shrink the file to the size of the header
 4. Expand the file to the expected size of file if it had headers and index blocks. This fills any gaps with 0s.
 
-##### Performance
+#### Performance
 
 - Time complexity: This operation is O(1)
 - Auxiliary space: This operation is O(1).
+
+## Optimizations
+
+### Pagination
+
+- `skip` and `limit` parameters are provided where:
+    - `skip` is the number of matching records to skip before starting to return. Default is zero.
+    - `limit` is the maximum number of records to return at any one time. Default is zero. When limit is zero, all
+      matched records are returned since it would make no sense for someone to search for zero items. 
 

@@ -376,6 +376,14 @@ impl BufferPool {
         let data_array = buf[0..size].to_vec();
         Ok(data_array)
     }
+
+    /// Gets all the key-value pairs that correspond to the given list of key-value addresses
+    pub(crate) fn get_many_key_values(
+        &self,
+        kv_addresses: &[u64],
+    ) -> io::Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        todo!()
+    }
 }
 
 impl PartialEq for BufferPool {
