@@ -183,8 +183,15 @@ impl InvertedIndex {
 
     /// Clears all the data in the search index, except the header, and its original
     /// variables
-    pub(crate) fn clear(&self) -> io::Result<()> {
-        todo!()
+    pub(crate) fn clear(&mut self) -> io::Result<()> {
+        let header = InvertedIndexHeader::new(
+            Some(self.header.max_keys),
+            Some(self.header.redundant_blocks),
+            Some(self.header.block_size),
+            Some(self.max_index_key_len),
+        );
+        self.file_size = header.initialize_file(&mut self.file)?;
+        Ok(())
     }
 
     /// Removes the given key from the cyclic linked list for the given `root_addr`
