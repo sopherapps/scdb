@@ -227,63 +227,13 @@ be allowed. Compaction can also be started by the user.
 2. Copy header into the new file
 3. Copy index into new file. This done index block by block.
 4. In each index block, find any non-zero index entries. For each of these:
-   i. set the `new_root_value_offset` to the `last_offset` of the new file ii. read the `root_value_offset` from
-   the `index_address` got from the index entry iii. let `current_offset` be `root_value_offset`
-   iv. read the `current_value` value at the `current_offset`
-   v. if `next_offset` of `current_value` equals `current_offset`
-    - set `next_value` to `current_value`
-      vi. else:
-        - read the value at `next_offset` of `current_value` and set `next_value` to that value. v. if `current_value`'
-          s `expiry` is greater or equal to current timestamp (i.e. it has expired):
-        - if `current_offset` equals `root_value_offset`:
-            - if `next_offset` equals `current_offset` (only one item in linked list):
-                - set the index entry for this value to 0 in the new file
-                - move on to the next non-zero index entry or exit if there is no more non-zero index
-            - else:
-                - set the index entry for this value to `last_offset` of the new file
-                - set `root_value_offset` to `next_offset`
-                - set `previous_offset` of `next_value` to `previous_offset` of `current_value`
-                - set `current_value` to `next_value`
-                - set `current_offset` to `next_offset`
-                - go back to step (v)
-        - else if `next_offset` equals `root_value_offset` (end of cycle):
-            - read the `latest_previous_value` from `latest_previous_offset` of the new file
-            - set the `next_offset` of `latest_previous_value` to the `new_root_value_offset`
-            - save it in the new file at the `latest_previous_offset`
-            - move on to the next non-zero index entry or exit if there is no more non-zero index
-        - else (not the root and not at the end of the cycle):
-            - set `previous_offset` of `next_value` to `previous_offset` of `current_value`
-            - set `current_value` to `next_value`
-            - set `current_offset` to `next_offset`
-            - go back to step (v)
-              vi. else (not expired):
-        - if `current_offset` equals `root_value_offset` (is root):
-            - set the `previous_offset` of `current_value` to `last_offset` of new file.
-            - set the `next_offset` of `current_value` to `last_offset` of new file.
-            - append the `current_value` to the new file as the `latest_previous_value` with its `is_root` set to true.
-            - set the index entry for this value to `last_offset` of the new file
-            - set the `new_root_value_offset` to `last_offset`
-            - set the `latest_previous_offset` to `last_offset`
-            - set `last_offset` header in new file to the updated `last_offset + get_size_of_v_entry(v)`
-            - if `next_offset` equals `current_offset` (only one item in linked list):
-                - move on to the next non-zero index entry or exit if there is no more non-zero index
-        - else if `next_offset` equals `root_value_offset` (is last item but not root):
-            - set the `previous_offset` of `current_value` to `last_offset` of new file.
-            - set the `next_offset` of `current_value` to `new_root_value_offset`.
-            - append the `current_value` to the new file as the `latest_previous_value`.
-            - set `last_offset` header in new file to the updated `last_offset + get_size_of_v_entry(v)`
-            - move on to the next non-zero index entry or exit if there is no more non-zero index
-        - else (many items and current is neither root nor last item)
-            - set the `previous_offset` of `current_value` to `latest_previous_offset` of new file.
-            - set the `latest_previous_offset` to `last_offset`
-            - set `last_offset` header in new file to the updated `last_offset + get_size_of_v_entry(v)`
-            - set the `next_offset` of `current_value` to `last_offset` of new file.
-            - append the `current_value` to the new file as the `latest_previous_value`.
-
-7. Update file_size to the new file's file size
-8. Point the buffer pool's file to that new file
-9. Delete the old file
-10. Rename the new file to the old file's name
+    - extract the entries as one contiguous yet doubly linked array, ignoring all that are expired
+    - write the array to the new file, with each item physically following the previous (i.e. contiguous)
+    - update the new file's last offset to include the newly added items
+6. Update file_size to the new file's file size
+7. Point the inverted index's file to that new file
+8. Delete the old file
+9. Rename the new file to the old file's name
 
 #### Performance
 
