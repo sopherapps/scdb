@@ -137,6 +137,7 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
     - read the value at the `value_offset`. This is the `current_value`.
     - retrieve the `index_key` of this `current_value`.
     - if the `index_key` is the same as the prefix:
+
       i. retrieve the `db_key` of this `current_value`. ii. if the `db_key` is the same as the key passed:
         - update the `is_deleted` of the `current_value` to true
         - if `previous_offset` equals `value_offset`:
@@ -158,19 +159,16 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
             - set the value at `index_address` to 0 i.e. reset it
         - increment `n` by 1
         - if `n` is greater than `max_index_key_len`, exit
-        - else go back to step 1 iii. else if `db_key` is not equal to the key passed:
-            - if `next_offset` equals `root_value_offset`:
-                - increment `n` by 1:
-                - if `n` is greater than `max_index_key_len`, exit
-                - else go back to step 1
-            - else:
-                - set the `value_offset` to `next_offset`
-                - read the value at the `value_offset`. This is the `current_value`.
-                - go back to step (i)
+        - else go back to step 1
+
+      iii. else if `db_key` is not equal to the key passed:
+      - if `next_offset` equals `root_value_offset`:
+      - increment `n` by 1:
+      - if `n` is greater than `max_index_key_len`, exit - else go back to step 1 - else:
+      - set the `value_offset` to `next_offset`
+      - read the value at the `value_offset`. This is the `current_value`. - go back to step (i)
     - else increment the `index_block_offset` by `net_block_size`
-        - if the new `index_block_offset` is equal to or greater than the `values_start_point`, raise
-          the `CollisionSaturatedError` error. We have run out of blocks without getting a free slot to add the value
-          entry.
+        - if the new `index_block_offset` is equal to or greater than the `values_start_point`, exit.
         - else go back to step 4.
 
 #### Performance

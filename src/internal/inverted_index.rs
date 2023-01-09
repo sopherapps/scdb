@@ -146,8 +146,34 @@ impl InvertedIndex {
     }
 
     /// Deletes the key's kv address from all prefixes' lists in the inverted index
-    pub(crate) fn remove(&self, key: &[u8]) -> io::Result<()> {
-        todo!()
+    pub(crate) fn remove(&mut self, key: &[u8]) -> io::Result<()> {
+        for i in 1u32..(self.max_index_key_len + 1) {
+            let prefix = &key[..i as usize];
+
+            let mut index_block = 0;
+            let index_offset = self.header.get_index_offset(prefix);
+
+            loop {
+                let index_offset = self
+                    .header
+                    .get_index_offset_in_nth_block(index_offset, index_block)?;
+                let addr = self.read_entry_address(index_offset)?;
+
+                if addr == ZERO_U64_BYTES {
+                    break;
+                } else if self.addr_belongs_to_prefix(&addr, prefix)? {
+                    self.remove_key_for_prefix(index_offset, &addr, key);
+                    break;
+                }
+
+                index_block += 1;
+                if index_block >= self.header.number_of_index_blocks {
+                    break;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Compacts the file, removing expired key offsets to reduce its size
@@ -159,6 +185,78 @@ impl InvertedIndex {
     /// variables
     pub(crate) fn clear(&self) -> io::Result<()> {
         todo!()
+    }
+
+    /// Removes the given key from the cyclic linked list for the given `root_addr`
+    fn remove_key_for_prefix(
+        &mut self,
+        index_addr: u64,
+        root_addr: &[u8],
+        key: &[u8],
+    ) -> io::Result<()> {
+        let root_addr = u64::from_be_bytes(slice_to_array(&root_addr[..])?);
+        let mut addr = root_addr;
+        loop {
+            let mut entry = self.read_entry(addr)?;
+            if entry.key == key {
+                let previous_addr = entry.previous_offset;
+                let next_addr = entry.next_offset;
+
+                // get the previous entry
+                let mut previous_entry = if previous_addr == addr {
+                    &mut entry
+                } else {
+                    &self.read_entry(previous_addr)?
+                };
+
+                // get the next entry
+                let mut next_entry = if next_addr == addr {
+                    &mut entry
+                } else if next_addr == previous_addr {
+                    &mut previous_entry
+                } else {
+                    &self.read_entry(next_addr)?
+                };
+
+                // set the previous_offset and next_offset, skipping the current entry's address
+                next_entry.previous_offset = entry.previous_offset;
+                previous_entry.next_offset = entry.next_offset;
+
+                // make next entry a root entry since the one being removed is a root entry
+                if entry.is_root {
+                    next_entry.is_root = true;
+                }
+
+                // the entry to delete is at the root, and is the only element, update the index
+                if addr == root_addr && next_addr == addr {
+                    self.file.seek(SeekFrom::Start(index_addr))?;
+                    self.file.write_all(&ZERO_U64_BYTES)?;
+                } else if entry.is_root {
+                    // the entry being removed is a root entry but there are other elements after it
+                    // Update the index to contain the address of the next entry
+                    self.file.seek(SeekFrom::Start(index_addr))?;
+                    self.file.write_all(&entry.next_offset.to_be_bytes())?;
+                }
+
+                self.write_entry_to_file(addr, &entry)?;
+
+                if addr != next_addr {
+                    self.write_entry_to_file(next_addr, &next_entry)?;
+                }
+
+                if addr != previous_addr {
+                    self.write_entry_to_file(previous_addr, &previous_entry)?;
+                }
+            }
+
+            addr = entry.next_offset;
+            // we have cycled back to the root entry, so exit
+            if addr == root_addr {
+                break;
+            }
+        }
+
+        Ok(())
     }
 
     /// Returns the kv_addresses of all items whose db key contain the given `term`
@@ -194,7 +292,7 @@ impl InvertedIndex {
     fn upsert_entry(
         &mut self,
         prefix: &[u8],
-        root_address: &Vec<u8>,
+        root_address: &[u8],
         key: &[u8],
         kv_address: u64,
         expiry: u64,
