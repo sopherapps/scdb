@@ -1,14 +1,13 @@
 use crate::internal::entries::headers::inverted_index_header::InvertedIndexHeader;
 use crate::internal::entries::headers::shared::{HEADER_SIZE_IN_BYTES, INDEX_ENTRY_SIZE_IN_BYTES};
-use crate::internal::entries::values::inverted_index_entry::{
-    InvertedIndexEntry, INVERTED_INDEX_ENTRY_MIN_SIZE_IN_BYTES,
-};
+use crate::internal::entries::values::inverted_index_entry::InvertedIndexEntry;
 use crate::internal::macros::validate_bounds;
 use crate::internal::utils::get_vm_page_size;
 use crate::internal::{slice_to_array, Header, ValueEntry};
+use memchr;
+use std::cmp::min;
 use std::fs::{File, OpenOptions};
-use std::io;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_MAX_INDEX_KEY_LEN: u32 = 3;
@@ -112,11 +111,6 @@ impl InvertedIndex {
         Ok(())
     }
 
-    /// Deletes the key's kv address from all prefixes' lists in the inverted index
-    pub(crate) fn remove(&self, key: &[u8]) -> io::Result<()> {
-        todo!()
-    }
-
     /// Returns list of db key-value addresses corresponding to the given term
     /// The addresses can then be used to get the list of key-values from the db
     ///
@@ -126,7 +120,33 @@ impl InvertedIndex {
     ///
     /// If `limit` is 0, all items are returned since it would make no sense for someone to search
     /// for zero items.
-    pub(crate) fn search(&self, term: &[u8], skip: u64, limit: u64) -> io::Result<Vec<u64>> {
+    pub(crate) fn search(&mut self, term: &[u8], skip: u64, limit: u64) -> io::Result<Vec<u64>> {
+        let prefix_len = min(term.len(), self.max_index_key_len as usize);
+        let prefix = &term[..prefix_len];
+
+        let mut index_block = 0;
+        let index_offset = self.header.get_index_offset(prefix);
+
+        while index_block < self.header.number_of_index_blocks {
+            let index_offset = self
+                .header
+                .get_index_offset_in_nth_block(index_offset, index_block)?;
+            let addr = self.read_entry_address(index_offset)?;
+
+            if addr == ZERO_U64_BYTES {
+                return Ok(vec![]);
+            } else if self.addr_belongs_to_prefix(&addr, prefix)? {
+                return self.get_matched_kv_addrs_for_prefix(term, &addr);
+            }
+
+            index_block += 1;
+        }
+
+        Ok(vec![])
+    }
+
+    /// Deletes the key's kv address from all prefixes' lists in the inverted index
+    pub(crate) fn remove(&self, key: &[u8]) -> io::Result<()> {
         todo!()
     }
 
@@ -139,6 +159,31 @@ impl InvertedIndex {
     /// variables
     pub(crate) fn clear(&self) -> io::Result<()> {
         todo!()
+    }
+
+    /// Returns the kv_addresses of all items whose db key contain the given `term`
+    fn get_matched_kv_addrs_for_prefix(
+        &mut self,
+        term: &[u8],
+        prefix_root_addr: &Vec<u8>,
+    ) -> io::Result<Vec<u64>> {
+        let mut matched_addresses: Vec<u64> = vec![];
+        let term_finder = memchr::memmem::Finder::new(term);
+
+        let root_addr = u64::from_be_bytes(slice_to_array(&prefix_root_addr[..])?);
+        let mut addr = root_addr;
+        loop {
+            let entry = self.read_entry(addr)?;
+            if term_finder.find(entry.key).is_some() {
+                matched_addresses.push(entry.kv_address);
+            }
+
+            addr = entry.next_offset;
+            if addr == root_addr {
+                break;
+            }
+        }
+        return Ok(matched_addresses);
     }
 
     /// Updates an existing entry whose prefix (or index key) is given and key is also as given.
@@ -193,6 +238,7 @@ impl InvertedIndex {
     }
 
     /// Writes a given entry to the file at the given address, returning the number of bytes written
+    #[inline(always)]
     fn write_entry_to_file(
         &mut self,
         address: u64,
@@ -205,6 +251,7 @@ impl InvertedIndex {
     }
 
     /// Reads the entry found at the given address returning it as a byte array
+    #[inline]
     fn read_entry(&mut self, address: u64) -> io::Result<InvertedIndexEntry<'_>> {
         let mut size_buf = [0u8; 4];
         self.file.seek(SeekFrom::Start(address))?;
@@ -219,6 +266,7 @@ impl InvertedIndex {
     }
 
     /// Appends a new root entry to the index file, and updates the inverted index's index
+    #[inline]
     fn append_new_root_entry(
         &mut self,
         prefix: &[u8],
@@ -246,6 +294,7 @@ impl InvertedIndex {
     ///
     /// If the address is less than [HEADER_SIZE_IN_BYTES] or [InvertedIndexHeader.values_start_point],
     /// an InvalidData error is returned
+    #[inline(always)]
     fn read_entry_address(&mut self, address: u64) -> io::Result<Vec<u8>> {
         validate_bounds!(
             (address, address + INDEX_ENTRY_SIZE_IN_BYTES),
@@ -432,7 +481,7 @@ mod tests {
             ("pig", 80, 0),
         ];
 
-        let search = create_search_index(file_name, &test_data);
+        let mut search = create_search_index(file_name, &test_data);
 
         let expected_results = vec![
             (("f", 0, 0), vec![20, 60, 160]),
@@ -451,7 +500,7 @@ mod tests {
             (("pig", 0, 0), vec![80]),
         ];
 
-        test_search_results(&search, &expected_results);
+        test_search_results(&mut search, &expected_results);
 
         // delete the index file
         fs::remove_file(&search.file_path).expect(&format!("delete file {:?}", &search.file_path));
@@ -472,7 +521,7 @@ mod tests {
             ("pig", 80, 0),
         ];
 
-        let search = create_search_index(file_name, &test_data);
+        let mut search = create_search_index(file_name, &test_data);
 
         let expected_results = vec![
             (("f", 0u64, 0u64), vec![20u64, 60, 160]),
@@ -496,7 +545,7 @@ mod tests {
             (("pi", 1, 2), vec![]),
         ];
 
-        test_search_results(&search, &expected_results);
+        test_search_results(&mut search, &expected_results);
 
         // delete the index file
         fs::remove_file(&search.file_path).expect(&format!("delete file {:?}", &search.file_path));
@@ -518,7 +567,7 @@ mod tests {
             ("pig", 80, 0),
         ];
 
-        let search = create_search_index(file_name, &test_data);
+        let mut search = create_search_index(file_name, &test_data);
 
         search.remove("foo".as_bytes()).expect("delete foo");
         search.remove("pig".as_bytes()).expect("delete pig");
@@ -540,7 +589,7 @@ mod tests {
             (("pig", 0, 0), vec![]),
         ];
 
-        test_search_results(&search, &expected_results);
+        test_search_results(&mut search, &expected_results);
 
         // delete the index file
         fs::remove_file(&search.file_path).expect(&format!("delete file {:?}", &search.file_path));
@@ -562,7 +611,7 @@ mod tests {
             ("pig", 80, 0),
         ];
 
-        let search = create_search_index(file_name, &test_data);
+        let mut search = create_search_index(file_name, &test_data);
 
         // delete one of the keys
         search.remove("pig".as_bytes()).expect("delete pig");
@@ -597,7 +646,7 @@ mod tests {
             (("pig", 0, 0), vec![]),
         ];
 
-        test_search_results(&search, &expected_results);
+        test_search_results(&mut search, &expected_results);
 
         // delete the index file
         fs::remove_file(&search.file_path).expect(&format!("delete file {:?}", &search.file_path));
@@ -618,7 +667,7 @@ mod tests {
             ("pig", 80, 0),
         ];
 
-        let search = create_search_index(file_name, &test_data);
+        let mut search = create_search_index(file_name, &test_data);
 
         search.clear().expect("clear");
 
@@ -639,7 +688,7 @@ mod tests {
             (("pig", 0, 0), vec![]),
         ];
 
-        test_search_results(&search, &expected_results);
+        test_search_results(&mut search, &expected_results);
 
         // delete the index file
         fs::remove_file(&search.file_path).expect(&format!("delete file {:?}", &search.file_path));
@@ -671,11 +720,11 @@ mod tests {
     /// tests the search index's search to see if when searched, the expected results
     /// are returned
     fn test_search_results(
-        search: &InvertedIndex,
+        idx: &mut InvertedIndex,
         expected_results: &Vec<((&str, u64, u64), Vec<u64>)>,
     ) {
         for ((term, skip, limit), expected) in expected_results {
-            let got = search
+            let got = idx
                 .search(term.as_bytes(), *skip, *limit)
                 .expect(&format!("search {}", term));
 
