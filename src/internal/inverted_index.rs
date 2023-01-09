@@ -139,7 +139,7 @@ impl InvertedIndex {
             if addr == ZERO_U64_BYTES {
                 return Ok(vec![]);
             } else if self.addr_belongs_to_prefix(&addr, prefix)? {
-                return self.get_matched_kv_addrs_for_prefix(term, &addr);
+                return self.get_matched_kv_addrs_for_prefix(term, &addr, skip, limit);
             }
 
             index_block += 1;
@@ -335,16 +335,28 @@ impl InvertedIndex {
         &mut self,
         term: &[u8],
         prefix_root_addr: &Vec<u8>,
+        skip: u64,
+        limit: u64,
     ) -> io::Result<Vec<u64>> {
         let mut matched_addresses: Vec<u64> = vec![];
         let term_finder = memchr::memmem::Finder::new(term);
+        let mut skipped = 0u64;
+        let should_slice = limit > 0;
 
         let root_addr = u64::from_be_bytes(slice_to_array(&prefix_root_addr[..])?);
         let mut addr = root_addr;
         loop {
             let entry = self.read_entry(addr)?;
             if term_finder.find(entry.key).is_some() {
-                matched_addresses.push(entry.kv_address);
+                if skipped < skip {
+                    skipped += 1;
+                } else {
+                    matched_addresses.push(entry.kv_address);
+                }
+
+                if should_slice && matched_addresses.len() as u64 >= limit {
+                    break;
+                }
             }
 
             addr = entry.next_offset;
