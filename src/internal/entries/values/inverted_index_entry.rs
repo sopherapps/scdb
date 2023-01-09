@@ -3,10 +3,11 @@ use crate::internal::entries::values::shared::ValueEntry;
 use crate::internal::macros::safe_slice;
 use crate::internal::utils::{bool_to_byte_array, byte_array_to_bool};
 use std::fmt::Debug;
+use std::fs::File;
 use std::io;
+use std::io::{Seek, SeekFrom, Write};
 
 pub(crate) const INVERTED_INDEX_ENTRY_MIN_SIZE_IN_BYTES: u32 = 4 + 4 + 1 + 1 + 8 + 8 + 8 + 8;
-pub(crate) const INVERTED_INDEX_ENTRY_BYTES_INDEX_KEY_OFFSET: usize = 8;
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct InvertedIndexEntry<'a> {
@@ -49,6 +50,22 @@ impl<'a> InvertedIndexEntry<'a> {
             previous_offset,
             is_deleted: false,
         }
+    }
+
+    /// Updates the next offset of a given entry on the given file at the given address
+    /// TODO: Test this
+    #[inline(always)]
+    pub(crate) fn update_next_offset_on_file(
+        &self,
+        file: &mut File,
+        entry_addr: u64,
+        new_next_offset: u64,
+    ) -> io::Result<()> {
+        let k_size =
+            (self.size - self.index_key_size - INVERTED_INDEX_ENTRY_MIN_SIZE_IN_BYTES) as u64;
+        let index_k_size = self.index_key_size as u64;
+        file.seek(SeekFrom::Start(entry_addr + k_size + index_k_size + 18))?;
+        file.write_all(&new_next_offset.to_be_bytes())
     }
 }
 

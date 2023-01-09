@@ -1,12 +1,18 @@
 use crate::internal::entries::headers::inverted_index_header::InvertedIndexHeader;
+use crate::internal::entries::headers::shared::{HEADER_SIZE_IN_BYTES, INDEX_ENTRY_SIZE_IN_BYTES};
+use crate::internal::entries::values::inverted_index_entry::{
+    InvertedIndexEntry, INVERTED_INDEX_ENTRY_MIN_SIZE_IN_BYTES,
+};
+use crate::internal::macros::validate_bounds;
 use crate::internal::utils::get_vm_page_size;
-use crate::internal::Header;
+use crate::internal::{slice_to_array, Header, ValueEntry};
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::io::{Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_MAX_INDEX_KEY_LEN: u32 = 3;
+const ZERO_U64_BYTES: [u8; 8] = 0u64.to_be_bytes();
 
 /// The Index for searching for the keys that exist in the database
 /// using full text search
@@ -17,6 +23,7 @@ pub(crate) struct InvertedIndex {
     values_start_point: u64,
     pub(crate) file_path: PathBuf,
     file_size: u64,
+    header: InvertedIndexHeader,
 }
 
 impl InvertedIndex {
@@ -61,14 +68,48 @@ impl InvertedIndex {
             values_start_point: header.values_start_point,
             file_path: file_path.into(),
             file_size,
+            header,
         };
 
         Ok(v)
     }
 
     /// Adds a key's kv address in the corresponding prefixes' lists to update the inverted index
-    pub(crate) fn add(&self, key: &[u8], offset: &[u8], expiry: u64) -> io::Result<()> {
-        todo!()
+    pub(crate) fn add(&mut self, key: &[u8], kv_address: u64, expiry: u64) -> io::Result<()> {
+        for i in 1u32..(self.max_index_key_len + 1) {
+            let prefix = &key[..i as usize];
+
+            let mut index_block = 0;
+            let index_offset = self.header.get_index_offset(prefix);
+
+            loop {
+                let index_offset = self
+                    .header
+                    .get_index_offset_in_nth_block(index_offset, index_block)?;
+                let addr = self.read_entry_address(index_offset)?;
+
+                if addr == ZERO_U64_BYTES {
+                    self.append_new_root_entry(prefix, index_offset, key, kv_address, expiry);
+                    break;
+                } else if self.addr_belongs_to_prefix(&addr, prefix)? {
+                    self.upsert_entry(prefix, &addr, key, kv_address, expiry)?;
+                    break;
+                }
+
+                index_block += 1;
+                if index_block >= self.header.number_of_index_blocks {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!(
+                            "CollisionSaturatedError: no free slot for key: {:?}",
+                            prefix
+                        ),
+                    ));
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Deletes the key's kv address from all prefixes' lists in the inverted index
@@ -98,6 +139,156 @@ impl InvertedIndex {
     /// variables
     pub(crate) fn clear(&self) -> io::Result<()> {
         todo!()
+    }
+
+    /// Updates an existing entry whose prefix (or index key) is given and key is also as given.
+    ///
+    /// It starts at the root of the doubly-linked cyclic list for the given prefix,
+    /// and looks for the given key. If it finds it, it updates it. If it does not find it, it appends
+    /// the new entry to the end of that list.
+    fn upsert_entry(
+        &mut self,
+        prefix: &[u8],
+        root_address: &Vec<u8>,
+        key: &[u8],
+        kv_address: u64,
+        expiry: u64,
+    ) -> io::Result<()> {
+        let root_address = u64::from_be_bytes(slice_to_array(&root_address[..])?);
+        let mut addr = root_address;
+
+        loop {
+            let mut entry = self.read_entry(addr)?;
+            if entry.key == key {
+                entry.kv_address = kv_address;
+                entry.expiry = expiry;
+                self.write_entry_to_file(root_address, &entry);
+                break;
+            } else if entry.next_offset == root_address {
+                // end of list, append new item to list
+                let new_entry = InvertedIndexEntry::new(
+                    prefix,
+                    key,
+                    expiry,
+                    false,
+                    kv_address,
+                    root_address,
+                    addr,
+                );
+
+                let new_entry_len = self.write_entry_to_file(self.file_size, &new_entry)?;
+                entry.update_next_offset_on_file(&mut self.file, addr, self.file_size)?;
+                self.file_size += new_entry_len as u64;
+                break;
+            }
+
+            addr = entry.next_offset;
+            if addr == root_address {
+                // try to avoid looping forever in case of data corruption or something
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Writes a given entry to the file at the given address, returning the number of bytes written
+    fn write_entry_to_file(
+        &mut self,
+        address: u64,
+        entry: &InvertedIndexEntry<'_>,
+    ) -> io::Result<usize> {
+        let entry_as_bytes = entry.as_bytes();
+        self.file.seek(SeekFrom::Start(address))?;
+        self.file.write_all(&entry_as_bytes)?;
+        Ok(entry_as_bytes.len())
+    }
+
+    /// Reads the entry found at the given address returning it as a byte array
+    fn read_entry(&mut self, address: u64) -> io::Result<InvertedIndexEntry<'_>> {
+        let mut size_buf = [0u8; 4];
+        self.file.seek(SeekFrom::Start(address))?;
+        self.file.read_exact(&mut size_buf)?;
+        let size = u32::from_be_bytes(size_buf);
+
+        let mut buf = vec![0u8; size as usize];
+        self.file.seek(SeekFrom::Start(address))?;
+        self.file.read_exact(&mut buf);
+
+        InvertedIndexEntry::from_data_array(&buf, 0)
+    }
+
+    /// Appends a new root entry to the index file, and updates the inverted index's index
+    fn append_new_root_entry(
+        &mut self,
+        prefix: &[u8],
+        index_offset: u64,
+        key: &[u8],
+        kv_address: u64,
+        expiry: u64,
+    ) -> io::Result<()> {
+        let new_addr = self.file.seek(SeekFrom::End(0))?;
+        let entry =
+            InvertedIndexEntry::new(prefix, key, expiry, true, kv_address, new_addr, new_addr);
+        let entry_as_bytes = entry.as_bytes();
+        self.file.write_all(&entry_as_bytes)?;
+
+        // update index
+        self.file.seek(SeekFrom::Start(index_offset))?;
+        self.file.write_all(&new_addr.to_be_bytes())?;
+        self.file_size = new_addr + entry_as_bytes.len() as u64;
+        Ok(())
+    }
+
+    /// Reads the index at the given address and returns it
+    ///
+    /// # Errors
+    ///
+    /// If the address is less than [HEADER_SIZE_IN_BYTES] or [InvertedIndexHeader.values_start_point],
+    /// an InvalidData error is returned
+    fn read_entry_address(&mut self, address: u64) -> io::Result<Vec<u8>> {
+        validate_bounds!(
+            (address, address + INDEX_ENTRY_SIZE_IN_BYTES),
+            (HEADER_SIZE_IN_BYTES, self.values_start_point)
+        )?;
+
+        let size = INDEX_ENTRY_SIZE_IN_BYTES as usize;
+
+        let mut buf: Vec<u8> = vec![0; size];
+        self.file.seek(SeekFrom::Start(address))?;
+        self.file.read_exact(&mut buf)?;
+        Ok(buf)
+    }
+
+    /// Checks to see if entry address belongs to the given `prefix` (i.e. index key)
+    ///
+    /// It returns false if the address is out of bounds
+    /// or when the index key there is not equal to `prefix`.
+    pub(crate) fn addr_belongs_to_prefix(
+        &mut self,
+        address: &[u8],
+        prefix: &[u8],
+    ) -> io::Result<bool> {
+        let address = u64::from_be_bytes(slice_to_array(address)?);
+        if address >= self.file_size {
+            return Ok(false);
+        }
+
+        let prefix_length = prefix.len();
+        let mut index_key_size_buf = [0u8; 4];
+        self.file.seek(SeekFrom::Start(address + 4))?;
+        self.file.read_exact(&mut index_key_size_buf)?;
+        let index_key_size = u32::from_be_bytes(index_key_size_buf);
+
+        if prefix_length as u32 != index_key_size {
+            return Ok(false);
+        }
+
+        let mut index_key_buf = vec![0u8; prefix_length];
+        self.file.seek(SeekFrom::Start(address + 8))?;
+        self.file.read_exact(&mut index_key_buf)?;
+
+        Ok(index_key_buf == prefix)
     }
 }
 
@@ -465,12 +656,12 @@ mod tests {
 
     /// Initializes a new SearchIndex and adds the given test_data
     fn create_search_index(file_name: &str, test_data: &Vec<(&str, u64, u64)>) -> InvertedIndex {
-        let search = InvertedIndex::new(&Path::new(file_name), None, None, None)
+        let mut search = InvertedIndex::new(&Path::new(file_name), None, None, None)
             .expect("create a new instance of SearchIndex");
         // add a series of keys and their offsets
         for (key, offset, expiry) in test_data {
             search
-                .add(key.as_bytes(), &offset.to_be_bytes(), *expiry)
+                .add(key.as_bytes(), *offset, *expiry)
                 .expect(&format!("add key offset {}", key));
         }
 
