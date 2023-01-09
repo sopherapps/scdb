@@ -54,7 +54,7 @@ There are six main operations
   'values_start_point' (`100 + (net_block_size * number_of_index_blocks)`),
   'net_block_size' (`number_of_items_per_index_block * 8`)
 
-### 2. AddKeyOffset
+### 2. Add
 
 1. Get the prefix of the key passed, upto `n` characters. At the start `n` = 1.
 2. The prefix supplied is run through a hash function with modulo `number_of_items_per_index_block`
@@ -68,8 +68,8 @@ There are six main operations
     - set the value's `is_root` to true
     - set the value's `next_offset` to `last_offset`
     - set the value's `previous_offset` to `last_offset` (i.e. previous offset = next offset = offset of current value)
-    - so the value entry (with all its data including `index_key_size`, `key_size`, `expiry` (got from ttl from user),
-      , `value`, `deleted`) is appended to the end of the file at offset `last_offset`
+    - so the value entry (with all its data including `index_key_size`, `expiry` (got from ttl from user), `kv_address`
+      , `deleted`) is appended to the end of the file at offset `last_offset`
     - the `last_offset` is then inserted at `index_address` in place of the zero
     - the `last_offset` header is then updated
       to `last_offset + get_size_of_v_entry(v)` [get_size_of_v gets the total size of the entry in bytes]
@@ -84,9 +84,8 @@ There are six main operations
             - if `n` is greater than `max_index_key_len`, stop the iteration and exit.
             - else go back to step 1 ii. Else if the `db_key` is not equal to the key being added
         - if the `next_offset` is equal to the `root_value_offset`, append the new value to the end of this list i.e.
-            - Append the value entry (with all its data including `key_size`, `expiry` (got from ttl from user)
-              , `value_size`
-              , `value`, `deleted`) is to the end of the file at offset `last_offset`
+            - Append the value entry (with all its data including `index_key_size`, `expiry` (got from ttl from user)
+              `deleted`, `kv_address`) is to the end of the file at offset `last_offset`
             - Set the `next_offset` of the current value entry (not the newly appended one) to `last_offset`
             - Set the `previous_offset` of the newly appended entry to the `value_offset`
             - Set the `next_offset` of the newly appended entry to the `root_value_offset`.
@@ -124,7 +123,7 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
   One possible remedy to this is to add a more redundant index block(s) i.e. increase `redundant_blocks`. Keep in mind
   that this consumes extra disk and memory space.
 
-### 3. DeleteKeyOffset
+### 3. Remove
 
 1. Get the prefix of the key passed, upto `n` characters. At the start `n` = 1.
 2. The prefix is run through a hash function with modulo `number_of_items_per_index_block`
@@ -157,17 +156,17 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
             - set the value at `index_address` to `next_offset`
         - if `value_offset` equals `root_value_offset`
             - set the value at `index_address` to 0 i.e. reset it
-      - increment `n` by 1
-      - if `n` is greater than `max_index_key_len`, exit
-      - else go back to step 1 iii. else if `db_key` is not equal to the key passed:
-          - if `next_offset` equals `root_value_offset`:
-              - increment `n` by 1:
-              - if `n` is greater than `max_index_key_len`, exit
-              - else go back to step 1
-          - else:
-              - set the `value_offset` to `next_offset`
-              - read the value at the `value_offset`. This is the `current_value`.
-              - go back to step (i)
+        - increment `n` by 1
+        - if `n` is greater than `max_index_key_len`, exit
+        - else go back to step 1 iii. else if `db_key` is not equal to the key passed:
+            - if `next_offset` equals `root_value_offset`:
+                - increment `n` by 1:
+                - if `n` is greater than `max_index_key_len`, exit
+                - else go back to step 1
+            - else:
+                - set the `value_offset` to `next_offset`
+                - read the value at the `value_offset`. This is the `current_value`.
+                - go back to step (i)
     - else increment the `index_block_offset` by `net_block_size`
         - if the new `index_block_offset` is equal to or greater than the `values_start_point`, raise
           the `CollisionSaturatedError` error. We have run out of blocks without getting a free slot to add the value
@@ -201,10 +200,10 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
     - if `index_key` equals prefix i. let `value_offset` equal to `root_value_offset`
       ii. retrieve the `db_key` of the `current_value`
       iii. if `db_key` contains the `search_term`:
-        - add its `db_offset` to the list of `matched_offsets`
+        - add its `kv_address` to the list of `matched_addresses`
           iv. set the `value_offset` to `next_offset` of the `current_value`
           v. if the `current_offset` equals `root_value_offset`
-            - read the key, values of the `matched_offsets` from the main database file and return them
+            - read the key, values of the `matched_addresses` from the main database file and return them
             - exit vi. else go back to step (ii).
     - else increment the `index_block_offset` by `net_block_size`
         - if the new `index_block_offset` is equal to or greater than the `key_values_start_point`, stop and return an

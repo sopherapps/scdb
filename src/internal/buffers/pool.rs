@@ -1,7 +1,8 @@
 use crate::internal::buffers::buffer::{Buffer, Value};
 use crate::internal::entries::headers::shared::{HEADER_SIZE_IN_BYTES, INDEX_ENTRY_SIZE_IN_BYTES};
 use crate::internal::entries::index::Index;
-use crate::internal::entries::key_value::OFFSET_FOR_KEY_IN_KV_ARRAY;
+use crate::internal::entries::values::key_value::OFFSET_FOR_KEY_IN_KV_ARRAY;
+use crate::internal::entries::values::shared::ValueEntry;
 use crate::internal::macros::validate_bounds;
 use crate::internal::utils::{get_vm_page_size, TRUE_AS_BYTE};
 use crate::internal::{acquire_lock, slice_to_array, DbFileHeader, Header, KeyValueEntry};
@@ -479,7 +480,7 @@ fn initialize_db_file(file: &mut File, header: &DbFileHeader) -> io::Result<u64>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::entries::key_value::KEY_VALUE_MIN_SIZE_IN_BYTES;
+    use crate::internal::entries::values::key_value::KEY_VALUE_MIN_SIZE_IN_BYTES;
     use crate::internal::get_current_timestamp;
     use serial_test::serial;
 

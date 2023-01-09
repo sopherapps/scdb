@@ -42,14 +42,13 @@ following features:
     - `SIZE <the 4 byte unsigned integer showing number of bits for this whole entry>`
     - `INDEX KEY SIZE <the 4 byte unsigned integer showing number of bits for the index key>`
     - `INDEX KEY <the inverted index key>`
-    - `KEY SIZE <the 4 byte unsigned integer showing number of bits for this key>`
     - `KEY <the database key>`
     - `IS DELETED <the 1-byte unsigned integer showing 1 for deleted, 0 for not>`
     - `IS ROOT <the 1-byte unsigned integer showing 1 for pseudo-root entry, 0 for others>`
-    - `EXPIRY <the timestamp>`
+    - `EXPIRY <the 8 byte unsigned integer representing timestamp for key to expire>`
     - `NEXT OFFSET <the 8 byte unsigned integer showing the offset in this file of the next entry of this list>`
     - `PREVIOUS OFFSET <the 8 byte unsigned integer showing the offset in this file of the previous entry of this list>`
-    - `DB OFFSET <the 8 byte unsigned integer showing the offset of this key within the db file>`
+    - `KV ADDRESS <the 8 byte unsigned integer showing the offset of this key within the db file>`
 
 ## Acknowledgements
 

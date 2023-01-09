@@ -127,7 +127,6 @@ mod tests {
     use std::fs::{File, OpenOptions};
     use std::io;
 
-    use crate::internal::entries::headers::header::Header;
     use crate::internal::entries::headers::shared::{
         Header, HEADER_SIZE_IN_BYTES, INDEX_ENTRY_SIZE_IN_BYTES,
     };

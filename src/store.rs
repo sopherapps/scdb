@@ -8,7 +8,7 @@ use clokwerk::{ScheduleHandle, Scheduler, TimeUnits};
 
 use crate::internal::{
     acquire_lock, get_current_timestamp, initialize_db_folder, slice_to_array, BufferPool,
-    DbFileHeader, Header, KeyValueEntry, SearchIndex,
+    DbFileHeader, Header, KeyValueEntry, SearchIndex, ValueEntry,
 };
 
 const DEFAULT_DB_FILE: &str = "dump.scdb";
@@ -225,7 +225,7 @@ impl Store {
 
                 // Update the search index
                 let search_index: MutexGuard<'_, SearchIndex> = acquire_lock!(self.search_index)?;
-                search_index.add_key_offset(k, &kv_address, expiry)?;
+                search_index.add(k, &kv_address, expiry)?;
 
                 return Ok(());
             }
@@ -327,7 +327,7 @@ impl Store {
         let k_copy = k.to_vec();
         let search_handle = thread::spawn(move || {
             let search_index: MutexGuard<'_, SearchIndex> = acquire_lock!(search_index)?;
-            search_index.delete_key_offset(&k_copy)
+            search_index.remove(&k_copy)
         });
 
         // delete from the scdb file
@@ -429,7 +429,7 @@ impl Store {
         let search_index = self.search_index.clone();
         let search_handle = thread::spawn(move || {
             let mut search_index: MutexGuard<'_, SearchIndex> = acquire_lock!(search_index)?;
-            search_index.compact_file()
+            search_index.compact()
         });
 
         // Compact the scdb file
@@ -510,7 +510,7 @@ fn initialize_compaction_scheduler(
         scheduler.every(interval.seconds()).run(move || {
             let mut search_index = acquire_lock!(search_index).expect("get lock on search index");
             search_index
-                .compact_file()
+                .compact()
                 .expect("compact search index file in thread")
         });
 

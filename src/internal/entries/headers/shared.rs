@@ -4,8 +4,9 @@ use std::io;
 use std::io::{Read, Seek, SeekFrom};
 
 pub(crate) const INDEX_ENTRY_SIZE_IN_BYTES: u64 = 8;
-
 pub(crate) const HEADER_SIZE_IN_BYTES: u64 = 100;
+pub(crate) const DEFAULT_DB_MAX_KEYS: u64 = 1_000_000;
+pub(crate) const DEFAULT_DB_REDUNDANT_BLOCKS: u16 = 1;
 
 pub(crate) trait Header: Sized {
     /// Gets the number of items per index block
@@ -94,6 +95,3 @@ impl DerivedHeaderProps {
         };
     }
 }
-
-pub const DEFAULT_DB_MAX_KEYS: u64 = 1_000_000;
-pub const DEFAULT_DB_REDUNDANT_BLOCKS: u16 = 1;

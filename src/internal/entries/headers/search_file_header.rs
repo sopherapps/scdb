@@ -73,7 +73,8 @@ impl Header for SearchFileHeader {
             .chain(&self.block_size.to_be_bytes())
             .chain(&self.max_keys.to_be_bytes())
             .chain(&self.redundant_blocks.to_be_bytes())
-            .chain(&[0u8; 70])
+            .chain(&self.max_index_key_len.to_be_bytes())
+            .chain(&[0u8; 66])
             .map(|v| v.to_owned())
             .collect()
     }
@@ -174,13 +175,13 @@ mod tests {
                 None,
                 None,
                 Some(9),
-                generate_header(9_000_000, 5, block_size, 9),
+                generate_header(9_000_000, 1, block_size, 9),
             ),
             (
                 Some(1_000_000),
                 None,
                 Some(9),
-                generate_header(1_000_000, 5, block_size, 9),
+                generate_header(1_000_000, 1, block_size, 9),
             ),
             (
                 Some(24_000_000),
@@ -252,7 +253,7 @@ mod tests {
             (
                 None,
                 None,
-                None,
+                Some(9),
                 vec![
                     title_bytes.clone(),
                     block_size_bytes.clone(),

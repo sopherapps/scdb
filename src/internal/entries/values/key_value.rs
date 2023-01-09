@@ -1,5 +1,5 @@
 use crate::internal;
-use crate::internal::get_current_timestamp;
+use crate::internal::entries::values::shared::ValueEntry;
 use crate::internal::macros::safe_slice;
 use crate::internal::utils::{bool_to_byte_array, byte_array_to_bool};
 use std::fmt::Debug;
@@ -36,9 +36,15 @@ impl<'a> KeyValueEntry<'a> {
             is_deleted: false,
         }
     }
+}
 
-    /// Extracts the key value entry from the data array
-    pub(crate) fn from_data_array(data: &'a [u8], offset: usize) -> io::Result<Self> {
+impl<'a> ValueEntry<'a> for KeyValueEntry<'a> {
+    #[inline(always)]
+    fn get_expiry(&self) -> u64 {
+        self.expiry
+    }
+
+    fn from_data_array(data: &'a [u8], offset: usize) -> io::Result<Self> {
         let data_len = data.len();
         let size_slice = safe_slice!(data, offset, offset + 4, data_len)?;
         let size = u32::from_be_bytes(internal::slice_to_array(size_slice)?);
@@ -75,8 +81,7 @@ impl<'a> KeyValueEntry<'a> {
         Ok(entry)
     }
 
-    /// Retrieves the byte array that represents the key value entry.
-    pub(crate) fn as_bytes(&self) -> Vec<u8> {
+    fn as_bytes(&self) -> Vec<u8> {
         self.size
             .to_be_bytes()
             .iter()
@@ -88,24 +93,15 @@ impl<'a> KeyValueEntry<'a> {
             .map(|v| v.to_owned())
             .collect()
     }
-
-    /// Returns true if key has lived for longer than its time-to-live
-    /// It will always return false if time-to-live was never set
-    pub(crate) fn is_expired(&self) -> bool {
-        if self.expiry == 0 {
-            false
-        } else {
-            self.expiry < get_current_timestamp()
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::internal::get_current_timestamp;
 
     const KV_DATA_ARRAY: [u8; 23] = [
-        /* size: 22u32*/ 0u8, 0, 0, 23, /* key size: 3u32*/ 0, 0, 0, 3,
+        /* size: 23u32*/ 0u8, 0, 0, 23, /* key size: 3u32*/ 0, 0, 0, 3,
         /* key */ 102, 111, 111, /* is_deleted */ 0, /* expiry 0u64 */ 0, 0, 0, 0,
         0, 0, 0, 0, /* value */ 98, 97, 114,
     ];

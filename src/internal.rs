@@ -1,7 +1,8 @@
 pub(crate) use buffers::BufferPool;
 pub(crate) use entries::headers::db_file_header::DbFileHeader;
 pub(crate) use entries::headers::shared::Header;
-pub(crate) use entries::key_value::KeyValueEntry;
+pub(crate) use entries::values::key_value::KeyValueEntry;
+pub(crate) use entries::values::shared::ValueEntry;
 pub(crate) use hash::get_hash;
 pub(crate) use macros::acquire_lock;
 pub(crate) use search::index::SearchIndex;
