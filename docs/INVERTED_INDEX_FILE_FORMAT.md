@@ -1,6 +1,6 @@
-# Search Index File Format
+# Inverted Index File Format
 
-This is a description of the file format for the search index
+This is a description of the file format for the inverted index used for full-text search
 
 ## Features
 

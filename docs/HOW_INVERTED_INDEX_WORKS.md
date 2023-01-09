@@ -1,4 +1,4 @@
-# How Search Index Works
+# How the Inverted Index Works
 
 This is how the search index for scdb works under the hood. Keep in mind that scdb is basically an inverted index
 implemented as a hashmap, backed by a list of doubly-linked cyclic lists of offsets.
