@@ -5,11 +5,11 @@ use crate::internal::utils::{bool_to_byte_array, byte_array_to_bool};
 use std::fmt::Debug;
 use std::io;
 
-pub(crate) const SEARCH_ENTRY_MIN_SIZE_IN_BYTES: u32 = 4 + 4 + 1 + 1 + 8 + 8 + 8 + 8;
-pub(crate) const SEARCH_ENTRY_BYTES_INDEX_KEY_OFFSET: usize = 8;
+pub(crate) const INVERTED_INDEX_ENTRY_MIN_SIZE_IN_BYTES: u32 = 4 + 4 + 1 + 1 + 8 + 8 + 8 + 8;
+pub(crate) const INVERTED_INDEX_ENTRY_BYTES_INDEX_KEY_OFFSET: usize = 8;
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct SearchEntry<'a> {
+pub(crate) struct InvertedIndexEntry<'a> {
     pub(crate) size: u32,
     pub(crate) index_key_size: u32,
     pub(crate) index_key: &'a [u8],
@@ -22,8 +22,8 @@ pub(crate) struct SearchEntry<'a> {
     pub(crate) kv_address: u64,
 }
 
-impl<'a> SearchEntry<'a> {
-    /// Creates a new SearchEntry
+impl<'a> InvertedIndexEntry<'a> {
+    /// Creates a new InvertedIndexEntry
     pub(crate) fn new(
         index_key: &'a [u8],
         key: &'a [u8],
@@ -35,7 +35,7 @@ impl<'a> SearchEntry<'a> {
     ) -> Self {
         let key_size = key.len() as u32;
         let index_key_size = index_key.len() as u32;
-        let size = key_size + index_key_size + SEARCH_ENTRY_MIN_SIZE_IN_BYTES;
+        let size = key_size + index_key_size + INVERTED_INDEX_ENTRY_MIN_SIZE_IN_BYTES;
 
         Self {
             size,
@@ -52,7 +52,7 @@ impl<'a> SearchEntry<'a> {
     }
 }
 
-impl<'a> ValueEntry<'a> for SearchEntry<'a> {
+impl<'a> ValueEntry<'a> for InvertedIndexEntry<'a> {
     #[inline(always)]
     fn get_expiry(&self) -> u64 {
         self.expiry
@@ -69,7 +69,7 @@ impl<'a> ValueEntry<'a> for SearchEntry<'a> {
         let index_k_size = index_key_size as usize;
         let index_key = safe_slice!(data, offset + 8, offset + 8 + index_k_size, data_len)?;
 
-        let k_size = (size - index_key_size - SEARCH_ENTRY_MIN_SIZE_IN_BYTES) as usize;
+        let k_size = (size - index_key_size - INVERTED_INDEX_ENTRY_MIN_SIZE_IN_BYTES) as usize;
         let key = safe_slice!(
             data,
             offset + 8 + index_k_size,
@@ -174,8 +174,8 @@ mod tests {
 
     #[test]
     fn search_entry_from_data_array() {
-        let expected = SearchEntry::new(&b"fo"[..], &b"foo"[..], 0, false, 100, 900, 90);
-        let got = SearchEntry::from_data_array(&SEARCH_ENTRY_BYTE_ARRAY[..], 0)
+        let expected = InvertedIndexEntry::new(&b"fo"[..], &b"foo"[..], 0, false, 100, 900, 90);
+        let got = InvertedIndexEntry::from_data_array(&SEARCH_ENTRY_BYTE_ARRAY[..], 0)
             .expect("search entry from data array");
         assert_eq!(
             &got, &expected,
@@ -186,14 +186,14 @@ mod tests {
 
     #[test]
     fn search_entry_from_data_array_with_offset() {
-        let expected = SearchEntry::new(&b"fo"[..], &b"foo"[..], 0, false, 100, 900, 90);
+        let expected = InvertedIndexEntry::new(&b"fo"[..], &b"foo"[..], 0, false, 100, 900, 90);
         let data_array: Vec<u8> = [89u8, 78u8]
             .iter()
             .chain(&SEARCH_ENTRY_BYTE_ARRAY)
             .map(|v| v.to_owned())
             .collect();
-        let got =
-            SearchEntry::from_data_array(&data_array[..], 2).expect("search entry from data array");
+        let got = InvertedIndexEntry::from_data_array(&data_array[..], 2)
+            .expect("search entry from data array");
         assert_eq!(
             &got, &expected,
             "got = {:?}, expected = {:?}",
@@ -208,13 +208,13 @@ mod tests {
             .chain(&SEARCH_ENTRY_BYTE_ARRAY)
             .map(|v| v.to_owned())
             .collect();
-        let got = SearchEntry::from_data_array(&data_array[..], 4);
+        let got = InvertedIndexEntry::from_data_array(&data_array[..], 4);
         assert!(got.is_err());
     }
 
     #[test]
     fn search_entry_as_bytes() {
-        let entry = SearchEntry::new(&b"fo"[..], &b"foo"[..], 0, false, 100, 900, 90);
+        let entry = InvertedIndexEntry::new(&b"fo"[..], &b"foo"[..], 0, false, 100, 900, 90);
         let expected = SEARCH_ENTRY_BYTE_ARRAY.to_vec();
         let got = entry.as_bytes();
         assert_eq!(
@@ -227,9 +227,9 @@ mod tests {
     #[test]
     fn entry_is_expired_works() {
         let never_expires =
-            SearchEntry::new(&b"ne"[..], &b"never_expires"[..], 0, false, 100, 900, 90);
+            InvertedIndexEntry::new(&b"ne"[..], &b"never_expires"[..], 0, false, 100, 900, 90);
         // 1666023836u64 is some past timestamp in October 2022
-        let expired = SearchEntry::new(
+        let expired = InvertedIndexEntry::new(
             &b"exp"[..],
             &b"expires"[..],
             1666023836u64,
@@ -238,7 +238,7 @@ mod tests {
             900,
             90,
         );
-        let not_expired = SearchEntry::new(
+        let not_expired = InvertedIndexEntry::new(
             &b"no"[..],
             &b"not_expired"[..],
             get_current_timestamp() * 2,

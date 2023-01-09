@@ -7,7 +7,7 @@ const DEFAULT_MAX_INDEX_KEY_LEN: u32 = 3;
 /// The Index for searching for the keys that exist in the database
 /// using full text search
 #[derive(Debug)]
-pub(crate) struct SearchIndex {
+pub(crate) struct InvertedIndex {
     file: File,
     max_index_key_len: u32,
     values_start_point: u64,
@@ -15,8 +15,8 @@ pub(crate) struct SearchIndex {
     file_size: u64,
 }
 
-impl SearchIndex {
-    /// Initializes a new Search Index
+impl InvertedIndex {
+    /// Initializes a new Inverted Index
     ///
     /// The max keys used in the search file are `max_index_key_len` * `db_max_keys`
     /// Since we each db key will be represented in the index a number of `max_index_key_len` times
@@ -65,7 +65,7 @@ impl SearchIndex {
     }
 }
 
-impl PartialEq for SearchIndex {
+impl PartialEq for InvertedIndex {
     fn eq(&self, other: &Self) -> bool {
         self.values_start_point == other.values_start_point
             && self.max_index_key_len == other.max_index_key_len
@@ -81,8 +81,7 @@ mod tests {
     use std::fs::OpenOptions;
     use std::io::{Seek, SeekFrom};
 
-    use crate::internal::entries::headers::search_file_header::SearchFileHeader;
-    use crate::internal::entries::values::search::SearchEntry;
+    use crate::internal::entries::headers::inverted_index_header::InvertedIndexHeader;
     use crate::internal::get_current_timestamp;
     use serial_test::serial;
 
@@ -105,30 +104,31 @@ mod tests {
                 (&Path::new(file_name), None, None, None),
                 Expected {
                     max_index_key_len: DEFAULT_MAX_INDEX_KEY_LEN,
-                    values_start_point: SearchFileHeader::new(None, None, None, None)
+                    values_start_point: InvertedIndexHeader::new(None, None, None, None)
                         .values_start_point,
                     file_path: Path::new(file_name).into(),
-                    file_size: SearchFileHeader::new(None, None, None, None).values_start_point,
+                    file_size: InvertedIndexHeader::new(None, None, None, None).values_start_point,
                 },
             ),
             (
                 (&Path::new(file_name), Some(10), None, None),
                 Expected {
                     max_index_key_len: 10,
-                    values_start_point: SearchFileHeader::new(None, None, None, Some(10))
+                    values_start_point: InvertedIndexHeader::new(None, None, None, Some(10))
                         .values_start_point,
                     file_path: Path::new(file_name).into(),
-                    file_size: SearchFileHeader::new(None, None, None, Some(10)).values_start_point,
+                    file_size: InvertedIndexHeader::new(None, None, None, Some(10))
+                        .values_start_point,
                 },
             ),
             (
                 (&Path::new(file_name), None, Some(360), None),
                 Expected {
                     max_index_key_len: DEFAULT_MAX_INDEX_KEY_LEN,
-                    values_start_point: SearchFileHeader::new(Some(360), None, None, None)
+                    values_start_point: InvertedIndexHeader::new(Some(360), None, None, None)
                         .values_start_point,
                     file_path: Path::new(file_name).into(),
-                    file_size: SearchFileHeader::new(Some(360), None, None, None)
+                    file_size: InvertedIndexHeader::new(Some(360), None, None, None)
                         .values_start_point,
                 },
             ),
@@ -136,10 +136,11 @@ mod tests {
                 (&Path::new(file_name), None, None, Some(4)),
                 Expected {
                     max_index_key_len: DEFAULT_MAX_INDEX_KEY_LEN,
-                    values_start_point: SearchFileHeader::new(None, Some(4), None, None)
+                    values_start_point: InvertedIndexHeader::new(None, Some(4), None, None)
                         .values_start_point,
                     file_path: Path::new(file_name).into(),
-                    file_size: SearchFileHeader::new(None, Some(4), None, None).values_start_point,
+                    file_size: InvertedIndexHeader::new(None, Some(4), None, None)
+                        .values_start_point,
                 },
             ),
         ];
@@ -148,7 +149,7 @@ mod tests {
         fs::remove_file(&file_name).ok();
 
         for ((file_path, max_index_key_len, max_keys, redundant_blocks), expected) in test_data {
-            let got = SearchIndex::new(file_path, max_index_key_len, max_keys, redundant_blocks)
+            let got = InvertedIndex::new(file_path, max_index_key_len, max_keys, redundant_blocks)
                 .expect("new search index");
 
             assert_eq!(&got.max_index_key_len, &expected.max_index_key_len);
@@ -174,10 +175,12 @@ mod tests {
         ];
 
         for (file_path, max_index_key_len, max_keys, redundant_blocks) in test_data {
-            let first = SearchIndex::new(file_path, max_index_key_len, max_keys, redundant_blocks)
-                .expect("new search index");
-            let second = SearchIndex::new(file_path, max_index_key_len, max_keys, redundant_blocks)
-                .expect("new buffer pool");
+            let first =
+                InvertedIndex::new(file_path, max_index_key_len, max_keys, redundant_blocks)
+                    .expect("new search index");
+            let second =
+                InvertedIndex::new(file_path, max_index_key_len, max_keys, redundant_blocks)
+                    .expect("new buffer pool");
 
             assert_eq!(&first, &second);
             // delete the file so that SearchIndex::new() can reinitialize it for the next iteration
@@ -425,8 +428,8 @@ mod tests {
     }
 
     /// Initializes a new SearchIndex and adds the given test_data
-    fn create_search_index(file_name: &str, test_data: &Vec<(&str, u64, u64)>) -> SearchIndex {
-        let search = SearchIndex::new(&Path::new(file_name), None, None, None)
+    fn create_search_index(file_name: &str, test_data: &Vec<(&str, u64, u64)>) -> InvertedIndex {
+        let search = InvertedIndex::new(&Path::new(file_name), None, None, None)
             .expect("create a new instance of SearchIndex");
         // add a series of keys and their offsets
         for (key, offset, expiry) in test_data {
@@ -441,7 +444,7 @@ mod tests {
     /// tests the search index's search to see if when searched, the expected results
     /// are returned
     fn test_search_results(
-        search: &SearchIndex,
+        search: &InvertedIndex,
         expected_results: &Vec<((&str, u64, u64), Vec<u64>)>,
     ) {
         for ((term, skip, limit), expected) in expected_results {

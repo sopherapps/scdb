@@ -8,7 +8,7 @@ use clokwerk::{ScheduleHandle, Scheduler, TimeUnits};
 
 use crate::internal::{
     acquire_lock, get_current_timestamp, initialize_db_folder, slice_to_array, BufferPool,
-    DbFileHeader, Header, KeyValueEntry, SearchIndex, ValueEntry,
+    DbFileHeader, Header, InvertedIndex, KeyValueEntry, ValueEntry,
 };
 
 const DEFAULT_DB_FILE: &str = "dump.scdb";
@@ -105,7 +105,7 @@ pub struct Store {
     buffer_pool: Arc<Mutex<BufferPool>>,
     header: DbFileHeader,
     scheduler: Option<ScheduleHandle>,
-    search_index: Arc<Mutex<SearchIndex>>,
+    search_index: Arc<Mutex<InvertedIndex>>,
 }
 
 impl Store {
@@ -147,7 +147,7 @@ impl Store {
             None,
         )?;
 
-        let search_index = SearchIndex::new(
+        let search_index = InvertedIndex::new(
             &search_idx_file_path,
             max_search_index_key_length,
             max_keys,
@@ -224,7 +224,7 @@ impl Store {
                 buffer_pool.update_index(index_offset, &kv_address)?;
 
                 // Update the search index
-                let search_index: MutexGuard<'_, SearchIndex> = acquire_lock!(self.search_index)?;
+                let search_index: MutexGuard<'_, InvertedIndex> = acquire_lock!(self.search_index)?;
                 search_index.add(k, &kv_address, expiry)?;
 
                 return Ok(());
@@ -326,7 +326,7 @@ impl Store {
         let search_index = self.search_index.clone();
         let k_copy = k.to_vec();
         let search_handle = thread::spawn(move || {
-            let search_index: MutexGuard<'_, SearchIndex> = acquire_lock!(search_index)?;
+            let search_index: MutexGuard<'_, InvertedIndex> = acquire_lock!(search_index)?;
             search_index.remove(&k_copy)
         });
 
@@ -381,7 +381,7 @@ impl Store {
         // Clear the search index in a separate thread
         let search_index = self.search_index.clone();
         let search_handle = thread::spawn(move || {
-            let search_index: MutexGuard<'_, SearchIndex> = acquire_lock!(search_index)?;
+            let search_index: MutexGuard<'_, InvertedIndex> = acquire_lock!(search_index)?;
             search_index.clear()
         });
 
@@ -428,7 +428,7 @@ impl Store {
         // Compact the search index file in a separate thread
         let search_index = self.search_index.clone();
         let search_handle = thread::spawn(move || {
-            let mut search_index: MutexGuard<'_, SearchIndex> = acquire_lock!(search_index)?;
+            let mut search_index: MutexGuard<'_, InvertedIndex> = acquire_lock!(search_index)?;
             search_index.compact()
         });
 
@@ -491,7 +491,7 @@ impl Drop for Store {
 fn initialize_compaction_scheduler(
     interval: Option<u32>,
     buffer_pool: &Arc<Mutex<BufferPool>>,
-    search_index: &Arc<Mutex<SearchIndex>>,
+    search_index: &Arc<Mutex<InvertedIndex>>,
 ) -> Option<ScheduleHandle> {
     let interval = interval.unwrap_or(3_600u32);
 

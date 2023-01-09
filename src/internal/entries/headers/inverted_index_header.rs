@@ -8,7 +8,7 @@ use std::io;
 use std::io::{Read, Seek, SeekFrom};
 
 #[derive(Debug, PartialEq, Clone, Eq, Ord, PartialOrd)]
-pub(crate) struct SearchFileHeader {
+pub(crate) struct InvertedIndexHeader {
     pub(crate) title: String,
     pub(crate) block_size: u32,
     pub(crate) max_keys: u64,
@@ -20,8 +20,8 @@ pub(crate) struct SearchFileHeader {
     pub(crate) max_index_key_len: u32,
 }
 
-impl SearchFileHeader {
-    /// Creates a new SearchFileHeader
+impl InvertedIndexHeader {
+    /// Creates a new InvertedIndexHeader
     pub(crate) fn new(
         max_keys: Option<u64>,
         redundant_blocks: Option<u16>,
@@ -50,7 +50,7 @@ impl SearchFileHeader {
     }
 }
 
-impl Header for SearchFileHeader {
+impl Header for InvertedIndexHeader {
     #[inline(always)]
     fn get_items_per_index_block(&self) -> u64 {
         self.items_per_index_block
@@ -114,9 +114,9 @@ impl Header for SearchFileHeader {
     }
 }
 
-impl Display for SearchFileHeader {
+impl Display for InvertedIndexHeader {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SearchFileHeader {{ title: {}, block_size: {}, max_keys: {}, redundant_blocks: {}, items_per_index_block: {}, number_of_index_blocks: {}, values_start_point: {}, net_block_size: {}, max_index_key_len: {}}}",
+        write!(f, "InvertedIndexHeader {{ title: {}, block_size: {}, max_keys: {}, redundant_blocks: {}, items_per_index_block: {}, number_of_index_blocks: {}, values_start_point: {}, net_block_size: {}, max_index_key_len: {}}}",
                self.title,
                self.block_size,
                self.max_keys,
@@ -145,7 +145,7 @@ mod tests {
     #[serial]
     fn search_file_header_new() {
         let block_size = get_vm_page_size();
-        type Record = (Option<u64>, Option<u16>, Option<u32>, SearchFileHeader);
+        type Record = (Option<u64>, Option<u16>, Option<u32>, InvertedIndexHeader);
         let test_table: Vec<Record> = vec![
             (
                 None,
@@ -192,7 +192,7 @@ mod tests {
         ];
 
         for (max_keys, redundant_blocks, max_index_key_len, expected) in test_table {
-            let got = SearchFileHeader::new(max_keys, redundant_blocks, None, max_index_key_len);
+            let got = InvertedIndexHeader::new(max_keys, redundant_blocks, None, max_index_key_len);
             assert_eq!(&got, &expected);
         }
     }
@@ -281,7 +281,7 @@ mod tests {
         ];
 
         for (max_keys, redundant_blocks, max_index_key_len, expected) in test_table {
-            let got = SearchFileHeader::new(max_keys, redundant_blocks, None, max_index_key_len)
+            let got = InvertedIndexHeader::new(max_keys, redundant_blocks, None, max_index_key_len)
                 .as_bytes();
             assert_eq!(&got, &expected);
         }
@@ -297,7 +297,7 @@ mod tests {
             83u8, 99, 100, 98, 73, 110, 100, 101, 120, 32, 118, 48, 46, 48, 48, 49,
         ];
         let reserve_bytes = vec![0u8; 66];
-        type Record = (Vec<u8>, SearchFileHeader);
+        type Record = (Vec<u8>, InvertedIndexHeader);
         let test_table: Vec<Record> = vec![
             (
                 vec![
@@ -350,7 +350,7 @@ mod tests {
         ];
 
         for (data_array, expected) in test_table {
-            let got = SearchFileHeader::from_data_array(&data_array).expect("from_data_array");
+            let got = InvertedIndexHeader::from_data_array(&data_array).expect("from_data_array");
             assert_eq!(&got, &expected);
         }
     }
@@ -423,7 +423,7 @@ mod tests {
         ];
 
         for data_array in test_table {
-            let got = SearchFileHeader::from_data_array(&data_array);
+            let got = InvertedIndexHeader::from_data_array(&data_array);
             assert!(got.is_err());
         }
     }
@@ -439,7 +439,7 @@ mod tests {
             83u8, 99, 100, 98, 73, 110, 100, 101, 120, 32, 118, 48, 46, 48, 48, 49,
         ];
         let reserve_bytes = vec![0u8; 66];
-        type Record = (Vec<u8>, SearchFileHeader);
+        type Record = (Vec<u8>, InvertedIndexHeader);
         let test_table: Vec<Record> = vec![
             (
                 vec![
@@ -494,7 +494,7 @@ mod tests {
         for (data_array, expected) in test_table {
             let mut file =
                 generate_file_with_data(file_path, &data_array).expect("generate file with data");
-            let got = SearchFileHeader::from_file(&mut file).expect("from_file");
+            let got = InvertedIndexHeader::from_file(&mut file).expect("from_file");
             assert_eq!(&got, &expected);
         }
 
@@ -572,7 +572,7 @@ mod tests {
         for data_array in test_table {
             let mut file =
                 generate_file_with_data(file_path, &data_array).expect("generate file with data");
-            let got = SearchFileHeader::from_file(&mut file);
+            let got = InvertedIndexHeader::from_file(&mut file);
             assert!(got.is_err());
         }
 
@@ -582,7 +582,7 @@ mod tests {
     #[test]
     #[serial]
     fn search_file_header_get_index_offset() {
-        let db_header = SearchFileHeader::new(None, None, None, None);
+        let db_header = InvertedIndexHeader::new(None, None, None, None);
         let offset = db_header.get_index_offset(b"foo");
         let block_1_start = HEADER_SIZE_IN_BYTES;
         let block_1_end = db_header.net_block_size + block_1_start;
@@ -592,7 +592,7 @@ mod tests {
     #[test]
     #[serial]
     fn search_file_header_get_index_offset_in_nth_block() {
-        let db_header = SearchFileHeader::new(None, None, None, None);
+        let db_header = InvertedIndexHeader::new(None, None, None, None);
         let initial_offset = db_header.get_index_offset(b"foo");
         let num_of_blocks = db_header.number_of_index_blocks;
         for i in 0..num_of_blocks {
@@ -608,7 +608,7 @@ mod tests {
     #[test]
     #[serial]
     fn search_file_header_get_index_offset_in_nth_block_out_of_bounds() {
-        let db_header = SearchFileHeader::new(None, None, None, None);
+        let db_header = InvertedIndexHeader::new(None, None, None, None);
         let initial_offset = db_header.get_index_offset(b"foo");
         let num_of_blocks = db_header.number_of_index_blocks;
 
@@ -619,16 +619,16 @@ mod tests {
         }
     }
 
-    /// Generates a SearchFileHeader basing on the inputs supplied. This is just a helper for tests
+    /// Generates a InvertedIndexHeader basing on the inputs supplied. This is just a helper for tests
     fn generate_header(
         max_keys: u64,
         redundant_blocks: u16,
         block_size: u32,
         max_index_key_len: u32,
-    ) -> SearchFileHeader {
+    ) -> InvertedIndexHeader {
         let derived_props = DerivedHeaderProps::new(block_size, max_keys, redundant_blocks);
 
-        SearchFileHeader {
+        InvertedIndexHeader {
             title: "ScdbIndex v0.001".to_string(),
             block_size,
             max_keys,
