@@ -78,17 +78,17 @@ There are six main operations
     - read the value at the `value_offset`. This is the current value.
     - retrieve the `index_key` of this current value.
     - if the `index_key` is the same as the prefix passed:
-      i. If the `db_key` of the current value entry is equal to the key that is to be added:
-        - set the new data from the db into the current value entry i.e. new `expiry` and the new `db_offset`.
-        - increment `n` by 1
-            - if `n` is greater than `max_index_key_len`, stop the iteration and exit.
-            - else go back to step 1 ii. Else if the `db_key` is not equal to the key being added
-        - if the `next_offset` is equal to the `root_value_offset`, append the new value to the end of this list i.e.
-            - Append the value entry (with all its data including `index_key_size`, `expiry` (got from ttl from user)
-              `deleted`, `kv_address`) is to the end of the file at offset `last_offset`
-            - Set the `next_offset` of the current value entry (not the newly appended one) to `last_offset`
-            - Set the `previous_offset` of the newly appended entry to the `value_offset`
-            - Set the `next_offset` of the newly appended entry to the `root_value_offset`.
+      - i. If the `db_key` of the current value entry is equal to the key that is to be added:
+          - set the new data from the db into the current value entry i.e. new `expiry` and the new `db_offset`.
+          - increment `n` by 1
+              - if `n` is greater than `max_index_key_len`, stop the iteration and exit.
+              - else go back to step 1 ii. Else if the `db_key` is not equal to the key being added
+          - if the `next_offset` is equal to the `root_value_offset`, append the new value to the end of this list i.e.
+              - Append the value entry (with all its data including `index_key_size`, `expiry` (got from ttl from user)
+                `deleted`, `kv_address`) is to the end of the file at offset `last_offset`
+              - Set the `next_offset` of the current value entry (not the newly appended one) to `last_offset`
+              - Set the `previous_offset` of the newly appended entry to the `value_offset`
+              - Set the `next_offset` of the newly appended entry to the `root_value_offset`.
             - the `last_offset` header is then updated to `last_offset + get_size_of_v(v)`
         - else
             - set `value_offset` to `next_offset`.
@@ -138,35 +138,36 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
     - retrieve the `index_key` of this `current_value`.
     - if the `index_key` is the same as the prefix:
 
-      i. retrieve the `db_key` of this `current_value`. ii. if the `db_key` is the same as the key passed:
-        - update the `is_deleted` of the `current_value` to true
-        - if `previous_offset` equals `value_offset`:
-            - set the `previous_value` to `current_value`
-        - else:
-            - read the value at `previous_offset` of the `current_value`. Set that `previous_value` to that value.
-        - if `next_offset` equals `value_offset`:
-            - set `next_value` to `current_value`
-        - else if `next_offset` equals `previous_offset`
-            - set `next_value` to `previous_value`
-        - else:
+        - i. retrieve the `db_key` of this `current_value`.
+        - ii. if the `db_key` is the same as the key passed:
+            - update the `is_deleted` of the `current_value` to true
+            - if `previous_offset` equals `value_offset`:
+                - set the `previous_value` to `current_value`
+            - else:
+                - read the value at `previous_offset` of the `current_value`. Set that `previous_value` to that value.
+            - if `next_offset` equals `value_offset`:
+                - set `next_value` to `current_value`
+            - else if `next_offset` equals `previous_offset`
+                - set `next_value` to `previous_value`
+            - else:
             - read the value at `next_offset` of the `current_value`. Set that `next_value` to that value
         - update the `next_offset` of the `previous_value` to `next_offset` of the `current_value`.
-        - update the `previous_offset` of the `next_value` to `previous_offset` of the `current_value`.
-        - if `is_root` is true for `current_value`:
-            - set the `is_root` of the `next_value` to true.
-            - set the value at `index_address` to `next_offset`
-        - if `value_offset` equals `root_value_offset`
-            - set the value at `index_address` to 0 i.e. reset it
-        - increment `n` by 1
-        - if `n` is greater than `max_index_key_len`, exit
-        - else go back to step 1
+            - update the `previous_offset` of the `next_value` to `previous_offset` of the `current_value`.
+            - if `is_root` is true for `current_value`:
+                - set the `is_root` of the `next_value` to true.
+                - set the value at `index_address` to `next_offset`
+            - if `value_offset` equals `root_value_offset`
+                - set the value at `index_address` to 0 i.e. reset it
+            - increment `n` by 1
+            - if `n` is greater than `max_index_key_len`, exit
+            - else go back to step 1
 
-      iii. else if `db_key` is not equal to the key passed:
-      - if `next_offset` equals `root_value_offset`:
-      - increment `n` by 1:
-      - if `n` is greater than `max_index_key_len`, exit - else go back to step 1 - else:
-      - set the `value_offset` to `next_offset`
-      - read the value at the `value_offset`. This is the `current_value`. - go back to step (i)
+      -iii. else if `db_key` is not equal to the key passed:
+        - if `next_offset` equals `root_value_offset`:
+        - increment `n` by 1:
+        - if `n` is greater than `max_index_key_len`, exit - else go back to step 1 - else:
+        - set the `value_offset` to `next_offset`
+        - read the value at the `value_offset`. This is the `current_value`. - go back to step (i)
     - else increment the `index_block_offset` by `net_block_size`
         - if the new `index_block_offset` is equal to or greater than the `values_start_point`, exit.
         - else go back to step 4.
@@ -195,14 +196,15 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
 7. If this `root_value_offset` is non-zero, it is possible that the value for that prefix exists.
     - retrieve the value at the `root_value_offset`. Let it be `current_value`.
     - retrieve the `index_key` of the `current_value`
-    - if `index_key` equals prefix i. let `value_offset` equal to `root_value_offset`
-      ii. retrieve the `db_key` of the `current_value`
-      iii. if `db_key` contains the `search_term`:
-        - add its `kv_address` to the list of `matched_addresses`
-          iv. set the `value_offset` to `next_offset` of the `current_value`
-          v. if the `current_offset` equals `root_value_offset`
-            - read the key, values of the `matched_addresses` from the main database file and return them
-            - exit vi. else go back to step (ii).
+    - if `index_key` equals prefix:
+        - i. let `value_offset` equal to `root_value_offset`
+        - ii. retrieve the `db_key` of the `current_value`
+        - iii. if `db_key` contains the `search_term`:
+            - add its `kv_address` to the list of `matched_addresses`
+        - iv. set the `value_offset` to `next_offset` of the `current_value`
+        - v. if the `current_offset` equals `root_value_offset`
+          - read the key, values of the `matched_addresses` from the main database file and return them - exit
+        - vi. else go back to step (ii).
     - else increment the `index_block_offset` by `net_block_size`
         - if the new `index_block_offset` is equal to or greater than the `key_values_start_point`, stop and return an
           empty list. No matches found.

@@ -11,7 +11,7 @@ use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::Mutex;
 
 const DEFAULT_MAX_INDEX_KEY_LEN: u32 = 3;
 const ZERO_U64_BYTES: [u8; 8] = 0u64.to_be_bytes();
