@@ -1,7 +1,7 @@
 use crate::internal::get_hash;
 use std::fs::File;
 use std::io;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 
 pub(crate) const INDEX_ENTRY_SIZE_IN_BYTES: u64 = 8;
 pub(crate) const HEADER_SIZE_IN_BYTES: u64 = 100;
@@ -66,6 +66,24 @@ pub(crate) trait Header: Sized {
         }
 
         Ok(initial_offset + (self.get_net_block_size() * n))
+    }
+
+    /// Initializes the underlying file, giving it the header and the index place holders
+    /// and truncating it. It returns the new file size
+    fn initialize_file(&self, file: &mut File) -> io::Result<u64> {
+        let header_bytes = self.as_bytes();
+        let header_length = header_bytes.len() as u64;
+        debug_assert_eq!(header_length, 100);
+        let final_size =
+            header_length + (self.get_number_of_index_blocks() * self.get_net_block_size());
+
+        file.seek(SeekFrom::Start(0))?;
+        file.write_all(&header_bytes)?;
+        // shrink file if it is still long
+        file.set_len(header_length)?;
+        // expand file to expected value, filling the extras with 0s
+        file.set_len(final_size)?;
+        Ok(final_size)
     }
 }
 

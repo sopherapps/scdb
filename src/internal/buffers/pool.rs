@@ -60,7 +60,7 @@ impl BufferPool {
 
         let header = if should_create_new {
             let header = DbFileHeader::new(max_keys, redundant_blocks, Some(buffer_size as u32));
-            initialize_db_file(&mut file, &header)?;
+            header.initialize_file(&mut file)?;
             header
         } else {
             DbFileHeader::from_file(&mut file)?
@@ -138,7 +138,7 @@ impl BufferPool {
     /// Clears all data on disk and memory making it like a new store
     pub(crate) fn clear_file(&mut self) -> io::Result<()> {
         let header = DbFileHeader::new(self.max_keys, self.redundant_blocks, None);
-        self.file_size = initialize_db_file(&mut self.file, &header)?;
+        self.file_size = header.initialize_file(&mut self.file)?;
         self.index_buffers.clear();
         self.kv_buffers.clear();
         Ok(())
@@ -458,23 +458,6 @@ fn get_kv_bytes(file: &Mutex<&File>, address: &[u8]) -> io::Result<Vec<u8>> {
     file.read_exact(&mut data)?;
 
     Ok(data)
-}
-
-/// Initializes the database file, giving it the header and the index place holders
-/// and truncating it. It returns the new file size
-fn initialize_db_file(file: &mut File, header: &DbFileHeader) -> io::Result<u64> {
-    let header_bytes = header.as_bytes();
-    let header_length = header_bytes.len() as u64;
-    debug_assert_eq!(header_length, 100);
-    let final_size = header_length + (header.number_of_index_blocks * header.net_block_size);
-
-    file.seek(SeekFrom::Start(0))?;
-    file.write_all(&header_bytes)?;
-    // shrink file if it is still long
-    file.set_len(header_length)?;
-    // expand file to expected value, filling the extras with 0s
-    file.set_len(final_size)?;
-    Ok(final_size)
 }
 
 #[cfg(test)]

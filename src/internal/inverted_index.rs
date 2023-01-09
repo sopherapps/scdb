@@ -1,5 +1,9 @@
-use std::fs::File;
+use crate::internal::entries::headers::inverted_index_header::InvertedIndexHeader;
+use crate::internal::utils::get_vm_page_size;
+use crate::internal::Header;
+use std::fs::{File, OpenOptions};
 use std::io;
+use std::io::{Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_MAX_INDEX_KEY_LEN: u32 = 3;
@@ -27,7 +31,39 @@ impl InvertedIndex {
         db_max_keys: Option<u64>,
         db_redundant_blocks: Option<u16>,
     ) -> io::Result<Self> {
-        todo!()
+        let block_size = get_vm_page_size();
+
+        let should_create_new = !file_path.exists();
+        let mut file = OpenOptions::new()
+            .write(true)
+            .read(true)
+            .create(should_create_new)
+            .open(file_path)?;
+
+        let header = if should_create_new {
+            let header = InvertedIndexHeader::new(
+                db_max_keys,
+                db_redundant_blocks,
+                Some(block_size),
+                max_index_key_len,
+            );
+            header.initialize_file(&mut file)?;
+            header
+        } else {
+            InvertedIndexHeader::from_file(&mut file)?
+        };
+
+        let file_size = file.seek(SeekFrom::End(0))?;
+
+        let v = Self {
+            file,
+            max_index_key_len: header.max_index_key_len,
+            values_start_point: header.values_start_point,
+            file_path: file_path.into(),
+            file_size,
+        };
+
+        Ok(v)
     }
 
     /// Adds a key's kv address in the corresponding prefixes' lists to update the inverted index
