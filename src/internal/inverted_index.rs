@@ -293,16 +293,7 @@ impl InvertedIndex {
                     if entry.is_root {
                         next_entry.is_root = true;
                         // update the root address so that it does not loop forever
-                        root_addr = addr;
-                        // update the next_offset of the last entry of the cycle to this addr
-                        let last_entry_bytes =
-                            read_entry_bytes(&mut self.file, entry.previous_offset)?;
-                        let last_entry = InvertedIndexEntry::from_data_array(&last_entry_bytes, 0)?;
-                        last_entry.update_next_offset_on_file(
-                            &mut self.file,
-                            entry.previous_offset,
-                            addr,
-                        )?;
+                        root_addr = next_addr;
                     }
 
                     write_entry_to_file(&mut self.file, next_addr, &next_entry)?;
