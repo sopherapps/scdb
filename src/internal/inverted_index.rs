@@ -10,8 +10,9 @@ use std::cmp::min;
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 const DEFAULT_MAX_INDEX_KEY_LEN: u32 = 3;
 const ZERO_U64_BYTES: [u8; 8] = 0u64.to_be_bytes();
@@ -220,7 +221,7 @@ impl InvertedIndex {
                 if idx_bytes != zero {
                     let root_addr = u64::from_be_bytes(slice_to_array(&idx_bytes[..])?);
                     let mut entry_list =
-                        extract_entries_for_prefix(&file, root_addr, new_file_offset)?;
+                        extract_entries_bytes_for_prefix(&file, root_addr, new_file_offset)?;
 
                     new_file_offset = write_entries_to_file(
                         &mut new_file,
@@ -268,37 +269,49 @@ impl InvertedIndex {
         let root_addr = u64::from_be_bytes(slice_to_array(&root_addr[..])?);
         let mut addr = root_addr;
         loop {
-            let mut entry = self.read_entry(addr)?;
+            let entry_bytes = read_entry_bytes(&mut self.file, addr)?;
+            let mut entry = InvertedIndexEntry::from_data_array(&entry_bytes, 0)?;
+
             if entry.key == key {
                 let previous_addr = entry.previous_offset;
                 let next_addr = entry.next_offset;
 
-                // get the previous entry
-                let mut previous_entry = if previous_addr == addr {
-                    &mut entry
-                } else {
-                    &self.read_entry(previous_addr)?
+                // Deal with next item
+                if next_addr != addr {
+                    let next_entry_bytes = read_entry_bytes(&mut self.file, next_addr)?;
+                    let mut next_entry = InvertedIndexEntry::from_data_array(&next_entry_bytes, 0)?;
+
+                    next_entry.previous_offset = entry.previous_offset;
+
+                    // if next is the same as previous, treat also as previous
+                    if next_addr == previous_addr {
+                        next_entry.next_offset = entry.next_offset;
+                    }
+
+                    // make next entry a root entry since the one being removed is a root entry
+                    if entry.is_root {
+                        next_entry.is_root = true;
+                    }
+
+                    write_entry_to_file(&mut self.file, next_addr, &next_entry)?;
                 };
 
-                // get the next entry
-                let mut next_entry = if next_addr == addr {
-                    &mut entry
-                } else if next_addr == previous_addr {
-                    &mut previous_entry
-                } else {
-                    &self.read_entry(next_addr)?
+                // Deal with previous item
+                if previous_addr != addr {
+                    let prev_entry_bytes = read_entry_bytes(&mut self.file, previous_addr)?;
+                    let mut previous_entry =
+                        InvertedIndexEntry::from_data_array(&prev_entry_bytes, 0)?;
+
+                    previous_entry.next_offset = entry.next_offset;
+                    write_entry_to_file(&mut self.file, previous_addr, &previous_entry)?;
                 };
 
-                // set the previous_offset and next_offset, skipping the current entry's address
-                next_entry.previous_offset = entry.previous_offset;
-                previous_entry.next_offset = entry.next_offset;
+                // Deal with current item
+                entry.is_deleted = true;
+                write_entry_to_file(&mut self.file, addr, &entry)?;
 
-                // make next entry a root entry since the one being removed is a root entry
-                if entry.is_root {
-                    next_entry.is_root = true;
-                }
-
-                // the entry to delete is at the root, and is the only element, update the index
+                // update index:
+                // if the entry to delete is at the root, and is the only element, reset the index
                 if addr == root_addr && next_addr == addr {
                     self.file.seek(SeekFrom::Start(index_addr))?;
                     self.file.write_all(&ZERO_U64_BYTES)?;
@@ -306,17 +319,7 @@ impl InvertedIndex {
                     // the entry being removed is a root entry but there are other elements after it
                     // Update the index to contain the address of the next entry
                     self.file.seek(SeekFrom::Start(index_addr))?;
-                    self.file.write_all(&entry.next_offset.to_be_bytes())?;
-                }
-
-                write_entry_to_file(&mut self.file, addr, &entry)?;
-
-                if addr != next_addr {
-                    write_entry_to_file(&mut self.file, next_addr, &next_entry)?;
-                }
-
-                if addr != previous_addr {
-                    write_entry_to_file(&mut self.file, previous_addr, &previous_entry)?;
+                    self.file.write_all(&next_addr.to_be_bytes())?;
                 }
             }
 
@@ -346,7 +349,9 @@ impl InvertedIndex {
         let root_addr = u64::from_be_bytes(slice_to_array(&prefix_root_addr[..])?);
         let mut addr = root_addr;
         loop {
-            let entry = self.read_entry(addr)?;
+            let entry_bytes = read_entry_bytes(&mut self.file, addr)?;
+            let mut entry = InvertedIndexEntry::from_data_array(&entry_bytes, 0)?;
+
             if term_finder.find(entry.key).is_some() {
                 if skipped < skip {
                     skipped += 1;
@@ -384,7 +389,9 @@ impl InvertedIndex {
         let mut addr = root_address;
 
         loop {
-            let mut entry = self.read_entry(addr)?;
+            let entry_bytes = read_entry_bytes(&mut self.file, addr)?;
+            let mut entry = InvertedIndexEntry::from_data_array(&entry_bytes, 0)?;
+
             if entry.key == key {
                 entry.kv_address = kv_address;
                 entry.expiry = expiry;
@@ -417,13 +424,6 @@ impl InvertedIndex {
         }
 
         Ok(())
-    }
-
-    /// Reads the entry found at the given address returning it as an InvertedIndexEntry
-    #[inline]
-    fn read_entry(&mut self, address: u64) -> io::Result<InvertedIndexEntry<'_>> {
-        let data_array = read_entry_bytes(&mut self.file, address)?;
-        InvertedIndexEntry::from_data_array(&data_array, 0)
     }
 
     /// Appends a new root entry to the index file, and updates the inverted index's index
@@ -511,7 +511,7 @@ impl PartialEq for InvertedIndex {
     }
 }
 
-/// Reads a byte array for an entry at the given address in a file mutex
+/// Reads a byte array for an entry at the given address in a file
 pub fn read_entry_bytes(file: &mut File, address: u64) -> io::Result<Vec<u8>> {
     let mut size_buf = [0u8; 4];
     file.seek(SeekFrom::Start(address))?;
@@ -525,32 +525,53 @@ pub fn read_entry_bytes(file: &mut File, address: u64) -> io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-/// Extracts a contiguous list for a given prefix for from `old_prefix_addr`,
+/// Reads a byte array for an entry at the given address in a file mutex
+pub fn read_entry_bytes_from_file_mutex(file: &Mutex<&File>, address: u64) -> io::Result<Vec<u8>> {
+    let mut file = acquire_lock!(file)?;
+
+    let mut size_buf = [0u8; 4];
+    file.seek(SeekFrom::Start(address))?;
+    file.read_exact(&mut size_buf)?;
+    let size = u32::from_be_bytes(size_buf);
+
+    let mut buf = vec![0u8; size as usize];
+    file.seek(SeekFrom::Start(address))?;
+    file.read_exact(&mut buf);
+
+    Ok(buf)
+}
+
+/// Extracts a contiguous list of entries' bytes for a given prefix for from `old_prefix_addr`,
 /// to be transferred to `new_prefix_root_addr` as a contiguous yet doubly linked list
-fn extract_entries_for_prefix(
+fn extract_entries_bytes_for_prefix(
     file: &Mutex<&File>,
     prefix_root_addr: u64,
     new_prefix_root_addr: u64,
-) -> io::Result<Vec<(InvertedIndexEntry<'static>, u64)>> {
+) -> io::Result<Vec<Vec<u8>>> {
+    struct Detail {
+        prev: u64,
+        next: u64,
+        size: u64,
+    }
     let mut addr = prefix_root_addr;
-    let mut entry_list: Vec<(InvertedIndexEntry<'_>, u64)> = vec![];
+    let mut detail_list: Vec<Detail> = vec![];
+    let mut data_list: Vec<Vec<u8>> = vec![];
 
     loop {
-        let mut file = acquire_lock!(file)?;
-        let entry_byte_array = read_entry_bytes(&mut file, addr)?;
+        let entry_byte_array = read_entry_bytes_from_file_mutex(file, addr)?;
         let mut entry = InvertedIndexEntry::from_data_array(&entry_byte_array, 0)?;
         let entry_size = entry_byte_array.len() as u64;
 
         if !entry.is_expired() {
-            let entry_list_len = entry_list.len();
-            if entry_list_len >= 1 {
-                let prev_index = entry_list_len - 1;
+            let detail_list_len = detail_list.len();
+            if detail_list_len >= 1 {
+                let prev_index = detail_list_len - 1;
                 // point to previous' next_offset because it was set to point to self
-                entry.previous_offset = entry_list[prev_index].0.next_offset;
+                entry.previous_offset = detail_list[prev_index].next;
                 // point to self for next_offset
-                entry.next_offset = entry_list[prev_index].0.next_offset + entry_list[prev_index].1;
+                entry.next_offset = detail_list[prev_index].prev + detail_list[prev_index].size;
                 // update previous' next_offset to point to current
-                entry_list[prev_index].0.next_offset = entry.next_offset;
+                detail_list[prev_index].next = entry.next_offset;
             } else {
                 // point to self, for both previous and next offsets
                 entry.previous_offset = new_prefix_root_addr;
@@ -559,7 +580,12 @@ fn extract_entries_for_prefix(
                 entry.is_root = true;
             }
 
-            entry_list.push((entry, entry_size));
+            data_list.push(entry.as_bytes());
+            detail_list.push(Detail {
+                next: entry.next_offset,
+                prev: entry.previous_offset,
+                size: entry_size,
+            });
         } else if entry.next_offset == prefix_root_addr {
             // reached end of the list
             break;
@@ -568,7 +594,29 @@ fn extract_entries_for_prefix(
         }
     }
 
-    Ok(entry_list)
+    let detail_list_len = detail_list.len();
+    if detail_list_len > 1 {
+        let last_index = detail_list_len - 1;
+        // close the circle:
+        // the first's previous_offset points to the last's offset
+        // and the last's next_offset points to the first's offset:
+        let last_entry_offset = detail_list[last_index].next;
+        let first_entry_offset = new_prefix_root_addr;
+
+        let mut first_entry = InvertedIndexEntry::from_data_array(&data_list[0], 0)?;
+        let mut last_entry = InvertedIndexEntry::from_data_array(&data_list[last_index], 0)?;
+
+        first_entry.previous_offset = last_entry_offset;
+        last_entry.next_offset = first_entry_offset;
+
+        let first_entry_bytes = first_entry.as_bytes();
+        let last_entry_bytes = last_entry.as_bytes();
+
+        data_list[0] = first_entry_bytes;
+        data_list[last_index] = last_entry_bytes;
+    }
+
+    Ok(data_list)
 }
 
 /// Writes a linked list of entries for a given prefix, into a file.
@@ -578,9 +626,9 @@ fn extract_entries_for_prefix(
 /// Returns the offset immediately after the list of entries i.e. the exclusive upper bound
 fn write_entries_to_file(
     file: &mut File,
-    mut index_addr: u64,
+    index_addr: u64,
     dest: u64,
-    entries: &mut Vec<(InvertedIndexEntry<'_>, u64)>,
+    entries: &mut Vec<Vec<u8>>,
 ) -> io::Result<u64> {
     let mut upper_bound = dest;
     if entries.len() == 0 {
@@ -588,26 +636,15 @@ fn write_entries_to_file(
         file.seek(SeekFrom::Start(index_addr))?;
         file.write_all(&ZERO_U64_BYTES)?;
     } else {
-        let entry_list_len = entries.len();
-        let last_index = entry_list_len - 1;
-        // close the circle:
-        // the first's previous_offset points to the last's offset
-        // and the last's next_offset points to the first's offset:
-        let last_entry_offset = entries[last_index].0.next_offset;
-        let first_entry_offset = dest;
-        let last_entry_size = entries[last_index].1;
-
-        entries[0].0.previous_offset = last_entry_offset;
-        entries[last_index].0.next_offset = first_entry_offset;
-
-        for (entry, entry_size) in entries {
-            write_entry_to_file(file, upper_bound, entry)?;
-            upper_bound += *entry_size;
+        for entry in entries {
+            file.seek(SeekFrom::Start(upper_bound))?;
+            file.write_all(entry)?;
+            upper_bound += entry.len() as u64;
         }
 
         // Update new file index
         file.seek(SeekFrom::Start(index_addr))?;
-        file.write_all(&first_entry_offset.to_be_bytes())?;
+        file.write_all(&dest.to_be_bytes())?;
     }
 
     Ok(upper_bound)

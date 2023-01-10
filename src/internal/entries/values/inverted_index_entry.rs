@@ -9,7 +9,7 @@ use std::io::{Seek, SeekFrom, Write};
 
 pub(crate) const INVERTED_INDEX_ENTRY_MIN_SIZE_IN_BYTES: u32 = 4 + 4 + 1 + 1 + 8 + 8 + 8 + 8;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) struct InvertedIndexEntry<'a> {
     pub(crate) size: u32,
     pub(crate) index_key_size: u32,

@@ -224,8 +224,9 @@ impl Store {
                 buffer_pool.update_index(index_offset, &kv_address)?;
 
                 // Update the search index
-                let search_index: MutexGuard<'_, InvertedIndex> = acquire_lock!(self.search_index)?;
-                search_index.add(k, &kv_address, expiry)?;
+                let mut search_index: MutexGuard<'_, InvertedIndex> =
+                    acquire_lock!(self.search_index)?;
+                search_index.add(k, prev_last_offset, expiry)?;
 
                 return Ok(());
             }
@@ -326,7 +327,7 @@ impl Store {
         let search_index = self.search_index.clone();
         let k_copy = k.to_vec();
         let search_handle = thread::spawn(move || {
-            let search_index: MutexGuard<'_, InvertedIndex> = acquire_lock!(search_index)?;
+            let mut search_index: MutexGuard<'_, InvertedIndex> = acquire_lock!(search_index)?;
             search_index.remove(&k_copy)
         });
 
@@ -381,7 +382,7 @@ impl Store {
         // Clear the search index in a separate thread
         let search_index = self.search_index.clone();
         let search_handle = thread::spawn(move || {
-            let search_index: MutexGuard<'_, InvertedIndex> = acquire_lock!(search_index)?;
+            let mut search_index: MutexGuard<'_, InvertedIndex> = acquire_lock!(search_index)?;
             search_index.clear()
         });
 
@@ -455,7 +456,7 @@ impl Store {
         skip: u64,
         limit: u64,
     ) -> io::Result<Vec<(Vec<u8>, Vec<u8>)>> {
-        let search_index = acquire_lock!(self.search_index)?;
+        let mut search_index = acquire_lock!(self.search_index)?;
         let offsets = search_index.search(term, skip, limit)?;
         let buffer_pool: MutexGuard<'_, BufferPool> = acquire_lock!(self.buffer_pool)?;
         return buffer_pool.get_many_key_values(&offsets);
