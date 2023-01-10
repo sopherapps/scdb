@@ -1,11 +1,10 @@
 use crate::internal::entries::headers::shared::{
     DerivedHeaderProps, Header, DEFAULT_DB_MAX_KEYS, HEADER_SIZE_IN_BYTES,
 };
-use crate::internal::{get_hash, utils};
+use crate::internal::utils;
 use std::fmt::{Display, Formatter};
-use std::fs::File;
 use std::io;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::SeekFrom;
 
 #[derive(Debug, PartialEq, Clone, Eq, Ord, PartialOrd)]
 pub(crate) struct InvertedIndexHeader {

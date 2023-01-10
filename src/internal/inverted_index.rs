@@ -92,7 +92,7 @@ impl InvertedIndex {
                 let addr = self.read_entry_address(index_offset)?;
 
                 if addr == ZERO_U64_BYTES {
-                    self.append_new_root_entry(prefix, index_offset, key, kv_address, expiry);
+                    self.append_new_root_entry(prefix, index_offset, key, kv_address, expiry)?;
                     break;
                 } else if self.addr_belongs_to_prefix(&addr, prefix)? {
                     self.upsert_entry(prefix, &addr, key, kv_address, expiry)?;
@@ -325,7 +325,8 @@ impl InvertedIndex {
 
             addr = entry.next_offset;
             // we have cycled back to the root entry, so exit
-            if addr == root_addr {
+            // The zero check is for data corruption
+            if addr == root_addr || addr == 0 {
                 break;
             }
         }
@@ -350,9 +351,9 @@ impl InvertedIndex {
         let mut addr = root_addr;
         loop {
             let entry_bytes = read_entry_bytes(&mut self.file, addr)?;
-            let mut entry = InvertedIndexEntry::from_data_array(&entry_bytes, 0)?;
+            let entry = InvertedIndexEntry::from_data_array(&entry_bytes, 0)?;
 
-            if term_finder.find(entry.key).is_some() {
+            if !entry.is_expired() && term_finder.find(entry.key).is_some() {
                 if skipped < skip {
                     skipped += 1;
                 } else {
@@ -365,7 +366,8 @@ impl InvertedIndex {
             }
 
             addr = entry.next_offset;
-            if addr == root_addr {
+            // The zero check is for data corruption
+            if addr == root_addr || addr == 0 {
                 break;
             }
         }
@@ -395,7 +397,7 @@ impl InvertedIndex {
             if entry.key == key {
                 entry.kv_address = kv_address;
                 entry.expiry = expiry;
-                write_entry_to_file(&mut self.file, root_address, &entry);
+                write_entry_to_file(&mut self.file, root_address, &entry)?;
                 break;
             } else if entry.next_offset == root_address {
                 // end of list, append new item to list
@@ -417,8 +419,9 @@ impl InvertedIndex {
             }
 
             addr = entry.next_offset;
-            if addr == root_address {
+            if addr == root_address || addr == 0 {
                 // try to avoid looping forever in case of data corruption or something
+                // The zero check is for data corruption
                 break;
             }
         }
