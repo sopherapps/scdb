@@ -831,7 +831,7 @@ mod tests {
             ("foo", 20, 0),
             ("food", 60, now + 3600),
             ("fore", 160, 0),
-            ("bar", 600, now + 3600),
+            ("bar", 600, now - 3600),
             ("bare", 90, now + 7200),
             ("barricade", 900, 0),
             ("pig", 80, 0),
@@ -1023,6 +1023,7 @@ mod tests {
     fn create_search_index(file_name: &str, test_data: &Vec<(&str, u64, u64)>) -> InvertedIndex {
         let mut search = InvertedIndex::new(&Path::new(file_name), None, None, None)
             .expect("create a new instance of SearchIndex");
+        search.clear().expect("clear the search");
         // add a series of keys and their offsets
         for (key, offset, expiry) in test_data {
             search
