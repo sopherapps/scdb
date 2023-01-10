@@ -67,6 +67,22 @@ impl<'a> InvertedIndexEntry<'a> {
         file.seek(SeekFrom::Start(entry_addr + k_size + index_k_size + 18))?;
         file.write_all(&new_next_offset.to_be_bytes())
     }
+
+    /// Updates the previous offset of a given entry on the given file at the given address
+    /// TODO: Test this
+    #[inline(always)]
+    pub(crate) fn update_previous_offset_on_file(
+        &self,
+        file: &mut File,
+        entry_addr: u64,
+        new_prev_offset: u64,
+    ) -> io::Result<()> {
+        let k_size =
+            (self.size - self.index_key_size - INVERTED_INDEX_ENTRY_MIN_SIZE_IN_BYTES) as u64;
+        let index_k_size = self.index_key_size as u64;
+        file.seek(SeekFrom::Start(entry_addr + k_size + index_k_size + 26))?;
+        file.write_all(&new_prev_offset.to_be_bytes())
+    }
 }
 
 impl<'a> ValueEntry<'a> for InvertedIndexEntry<'a> {

@@ -164,9 +164,10 @@ impl InvertedIndex {
                 let addr = self.read_entry_address(index_offset)?;
 
                 if addr == ZERO_U64_BYTES {
+                    // prefix does not exist
                     break;
                 } else if self.addr_belongs_to_prefix(&addr, prefix)? {
-                    self.remove_key_for_prefix(index_offset, &addr, key);
+                    self.remove_key_for_prefix(index_offset, &addr, key)?;
                     break;
                 }
 
@@ -266,7 +267,7 @@ impl InvertedIndex {
         root_addr: &[u8],
         key: &[u8],
     ) -> io::Result<()> {
-        let root_addr = u64::from_be_bytes(slice_to_array(&root_addr[..])?);
+        let mut root_addr = u64::from_be_bytes(slice_to_array(&root_addr[..])?);
         let mut addr = root_addr;
         loop {
             let entry_bytes = read_entry_bytes(&mut self.file, addr)?;
@@ -291,6 +292,17 @@ impl InvertedIndex {
                     // make next entry a root entry since the one being removed is a root entry
                     if entry.is_root {
                         next_entry.is_root = true;
+                        // update the root address so that it does not loop forever
+                        root_addr = addr;
+                        // update the next_offset of the last entry of the cycle to this addr
+                        let last_entry_bytes =
+                            read_entry_bytes(&mut self.file, entry.previous_offset)?;
+                        let last_entry = InvertedIndexEntry::from_data_array(&last_entry_bytes, 0)?;
+                        last_entry.update_next_offset_on_file(
+                            &mut self.file,
+                            entry.previous_offset,
+                            addr,
+                        )?;
                     }
 
                     write_entry_to_file(&mut self.file, next_addr, &next_entry)?;
@@ -413,7 +425,20 @@ impl InvertedIndex {
 
                 let new_entry_len =
                     write_entry_to_file(&mut self.file, self.file_size, &new_entry)?;
+
+                // update the next offset of the current entry to this address
                 entry.update_next_offset_on_file(&mut self.file, addr, self.file_size)?;
+
+                // update the root entry to have its previous offset point to the newly added entry
+                let root_entry_bytes = read_entry_bytes(&mut self.file, root_address)?;
+                let root_entry = InvertedIndexEntry::from_data_array(&root_entry_bytes, 0)?;
+                root_entry.update_previous_offset_on_file(
+                    &mut self.file,
+                    root_address,
+                    self.file_size,
+                )?;
+
+                // increment file size by the new entry's size
                 self.file_size += new_entry_len as u64;
                 break;
             }
@@ -831,7 +856,7 @@ mod tests {
             ("foo", 20, 0),
             ("food", 60, now + 3600),
             ("fore", 160, 0),
-            ("bar", 600, now - 3600),
+            ("bar", 600, now - 3600), // expired
             ("bare", 90, now + 7200),
             ("barricade", 900, 0),
             ("pig", 80, 0),
