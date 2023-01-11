@@ -234,6 +234,12 @@ Clear the entire database.
 - Time complexity: This operation is O(1)
 - Auxiliary space: This operation is O(1).
 
+## Integration With DB File
+
+- The inverted index works separately from the BufferPool only until the point of compaction.
+- When the DB file is being compacted, addresses are being moved around and so that requires the index to be rebuilt.
+- This makes compaction an even more expensive operation than it was before.
+
 ## Optimizations
 
 ### Pagination
