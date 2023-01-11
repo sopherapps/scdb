@@ -207,6 +207,8 @@ You can also look in the [./docs](./docs) folder to get up to speed with the int
 
 - [database file format](./docs/DB_FILE_FORMAT.md)
 - [how it works](./docs/HOW_IT_WORKS.md)
+- [inverted index file format](./docs/INVERTED_INDEX_FILE_FORMAT.md)
+- [how the search works](./docs/HOW_INVERTED_INDEX_WORKS.md)
 
 ## Bindings
 
