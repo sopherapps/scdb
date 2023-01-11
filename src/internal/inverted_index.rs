@@ -77,7 +77,9 @@ impl InvertedIndex {
 
     /// Adds a key's kv address in the corresponding prefixes' lists to update the inverted index
     pub(crate) fn add(&mut self, key: &[u8], kv_address: u64, expiry: u64) -> io::Result<()> {
-        for i in 1u32..(self.max_index_key_len + 1) {
+        let upper_bound = min(key.len() as u32, self.max_index_key_len) + 1;
+
+        for i in 1u32..upper_bound {
             let prefix = &key[..i as usize];
 
             let mut index_block = 0;
