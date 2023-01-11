@@ -4,7 +4,8 @@ use crate::internal::entries::headers::shared::{
 use crate::internal::utils;
 use std::fmt::{Display, Formatter};
 use std::io;
-use std::io::SeekFrom;
+
+pub(crate) const DEFAULT_MAX_INDEX_KEY_LEN: u32 = 3;
 
 #[derive(Debug, PartialEq, Clone, Eq, Ord, PartialOrd)]
 pub(crate) struct InvertedIndexHeader {
@@ -27,13 +28,13 @@ impl InvertedIndexHeader {
         block_size: Option<u32>,
         max_index_key_len: Option<u32>,
     ) -> Self {
-        let max_index_key_len = max_index_key_len.unwrap_or(3);
+        let max_index_key_len = max_index_key_len.unwrap_or(DEFAULT_MAX_INDEX_KEY_LEN);
         let max_keys = max_keys.unwrap_or(DEFAULT_DB_MAX_KEYS * (max_index_key_len as u64));
         let redundant_blocks = redundant_blocks.unwrap_or(1);
         let block_size = block_size.unwrap_or_else(utils::get_vm_page_size);
         let derived_props = DerivedHeaderProps::new(block_size, max_keys, redundant_blocks);
 
-        let mut header = Self {
+        let header = Self {
             title: "ScdbIndex v0.001".to_string(),
             block_size,
             max_keys,
@@ -97,7 +98,7 @@ impl Header for InvertedIndexHeader {
         let max_index_key_len = u32::from_be_bytes(utils::slice_to_array::<4>(&data[30..34])?);
         let derived_props = DerivedHeaderProps::new(block_size, max_keys, redundant_blocks);
 
-        let mut header = Self {
+        let header = Self {
             title,
             block_size,
             max_keys,
