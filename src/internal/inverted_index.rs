@@ -151,7 +151,9 @@ impl InvertedIndex {
 
     /// Deletes the key's kv address from all prefixes' lists in the inverted index
     pub(crate) fn remove(&mut self, key: &[u8]) -> io::Result<()> {
-        for i in 1u32..(self.max_index_key_len + 1) {
+        let upper_bound = min(key.len() as u32, self.max_index_key_len) + 1;
+
+        for i in 1u32..upper_bound {
             let prefix = &key[..i as usize];
 
             let mut index_block = 0;
