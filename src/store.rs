@@ -1,17 +1,18 @@
 use std::fmt::{Debug, Display, Formatter};
-use std::io;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
+use std::{io, thread};
 
 use clokwerk::{ScheduleHandle, Scheduler, TimeUnits};
 
 use crate::internal::{
     acquire_lock, get_current_timestamp, initialize_db_folder, slice_to_array, BufferPool,
-    DbFileHeader, KeyValueEntry,
+    DbFileHeader, Header, InvertedIndex, KeyValueEntry, ValueEntry,
 };
 
 const DEFAULT_DB_FILE: &str = "dump.scdb";
+const DEFAULT_SEARCH_INDEX_FILE: &str = "index.iscdb";
 const ZERO_U64_BYTES: [u8; 8] = 0u64.to_be_bytes();
 
 /// A key-value store that persists key-value pairs to disk
@@ -47,6 +48,9 @@ const ZERO_U64_BYTES: [u8; 8] = 0u64.to_be_bytes();
 ///                                                     A new key-value pair is created and the old one is left unindexed.
 ///                                                     Compaction is important because it reclaims this space and reduces the size
 ///                                                     of the database file.
+/// - `max_index_key_len` - default 3: The maximum number of characters in the each key in the search inverted index
+///                                             The inverted index is used for full-text search of keys to get all key-values
+///                                             whose keys start with a given byte array.
 ///
 /// # Examples
 ///
@@ -63,7 +67,8 @@ const ZERO_U64_BYTES: [u8; 8] = 0u64.to_be_bytes();
 ///                             Some(1000), // `max_keys`
 ///                             Some(1), // `redundant_blocks`
 ///                             Some(10), // `pool_capacity`
-///                             Some(1800))?; // `compaction_interval`
+///                             Some(1800),// `compaction_interval`
+///                             Some(3))?; // `max_index_key_len`
 ///     let key = b"foo";
 ///     let value = b"bar";
 ///
@@ -100,6 +105,7 @@ pub struct Store {
     buffer_pool: Arc<Mutex<BufferPool>>,
     header: DbFileHeader,
     scheduler: Option<ScheduleHandle>,
+    search_index: Arc<Mutex<InvertedIndex>>,
 }
 
 impl Store {
@@ -115,7 +121,7 @@ impl Store {
     /// use scdb::Store;
     ///
     /// # fn main() -> std::io::Result<()> {
-    /// let store = Store::new("db", None, None, None, None)?;
+    /// let store = Store::new("db", None, None, None, None, None)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -125,9 +131,11 @@ impl Store {
         redundant_blocks: Option<u16>,
         pool_capacity: Option<usize>,
         compaction_interval: Option<u32>,
+        max_index_key_len: Option<u32>,
     ) -> io::Result<Self> {
         let db_folder = Path::new(store_path);
         let db_file_path = db_folder.join(DEFAULT_DB_FILE);
+        let search_idx_file_path = db_folder.join(DEFAULT_SEARCH_INDEX_FILE);
 
         initialize_db_folder(db_folder)?;
 
@@ -139,14 +147,23 @@ impl Store {
             None,
         )?;
 
+        let search_index = InvertedIndex::new(
+            &search_idx_file_path,
+            max_index_key_len,
+            max_keys,
+            redundant_blocks,
+        )?;
+
         let header = extract_header_from_buffer_pool(&mut buffer_pool)?;
         let buffer_pool = Arc::new(Mutex::new(buffer_pool));
-        let scheduler = initialize_compaction_scheduler(compaction_interval, &buffer_pool);
+        let search_index = Arc::new(Mutex::new(search_index));
+        let scheduler = initialize_scheduler(compaction_interval, &buffer_pool, &search_index);
 
         let store = Self {
             buffer_pool,
             header,
             scheduler,
+            search_index,
         };
 
         Ok(store)
@@ -169,9 +186,9 @@ impl Store {
     /// # use scdb::Store;
     /// #
     /// # fn main() -> std::io::Result<()> {
-    /// # let mut  store = Store::new("db", None, None, None, None)?;
+    /// # let mut  store = Store::new("db", None, None, None, None, None)?;
     /// // set a key-value pair that never expires
-    /// store.set(&b"foo"[..], &b"bar"[..], None)?;    ///
+    /// store.set(&b"foo"[..], &b"bar"[..], None)?;
     /// # assert_eq!(store.get(&b"foo"[..])?, Some(b"bar".to_vec()));
     ///
     /// // set a key-value pair that expires after 5 seconds
@@ -188,20 +205,28 @@ impl Store {
 
         let mut index_block = 0;
         let index_offset = self.header.get_index_offset(k);
-        let mut buffer_pool = acquire_lock!(self.buffer_pool)?;
+        let mut buffer_pool: MutexGuard<'_, BufferPool> = acquire_lock!(self.buffer_pool)?;
 
         while index_block < self.header.number_of_index_blocks {
             let index_offset = self
                 .header
                 .get_index_offset_in_nth_block(index_offset, index_block)?;
             let kv_offset_in_bytes = buffer_pool.read_index(index_offset)?;
-            let entry_offset = u64::from_be_bytes(slice_to_array(&kv_offset_in_bytes)?);
 
-            if entry_offset == 0 || buffer_pool.addr_belongs_to_key(entry_offset, k)? {
+            if kv_offset_in_bytes == ZERO_U64_BYTES
+                || buffer_pool.addr_belongs_to_key(&kv_offset_in_bytes, k)?
+            {
                 let kv = KeyValueEntry::new(k, v, expiry);
                 let mut kv_bytes = kv.as_bytes();
                 let prev_last_offset = buffer_pool.append(&mut kv_bytes)?;
-                buffer_pool.update_index(index_offset, &prev_last_offset.to_be_bytes())?;
+                let kv_address = prev_last_offset.to_be_bytes();
+                buffer_pool.update_index(index_offset, &kv_address)?;
+
+                // Update the search index
+                let mut search_index: MutexGuard<'_, InvertedIndex> =
+                    acquire_lock!(self.search_index)?;
+                search_index.add(k, prev_last_offset, expiry)?;
+
                 return Ok(());
             }
 
@@ -227,7 +252,8 @@ impl Store {
     /// # use scdb::Store;
     /// #
     /// # fn main() -> std::io::Result<()> {
-    /// # let mut  store = Store::new("set_testdb", None, None, None, None)?;
+    /// # let mut  store = Store::new("db", None, None, None, None, None)?;
+    /// # store.clear()?;
     /// # store.set(&b"foo"[..], &b"bar"[..], None)?;
     /// // if (b"foo", b"bar") exists,
     /// // the value returned will be Some(b"bar")
@@ -242,7 +268,7 @@ impl Store {
     pub fn get(&mut self, k: &[u8]) -> io::Result<Option<Vec<u8>>> {
         let mut index_block = 0;
         let index_offset = self.header.get_index_offset(k);
-        let mut buffer_pool = acquire_lock!(self.buffer_pool)?;
+        let mut buffer_pool: MutexGuard<'_, BufferPool> = acquire_lock!(self.buffer_pool)?;
 
         while index_block < self.header.number_of_index_blocks {
             let index_offset = self
@@ -281,7 +307,8 @@ impl Store {
     /// # use scdb::Store;
     /// #
     /// # fn main() -> std::io::Result<()> {
-    /// # let mut  store = Store::new("db", None, None, None, None)?;
+    /// # let mut  store = Store::new("db", None, None, None, None, None)?;
+    /// # store.clear()?;
     /// # store.set(&b"foo"[..], &b"bar"[..], None)?;
     /// // if (b"foo", b"bar") exists
     /// assert_eq!(store.get(&b"foo"[..])?, Some(b"bar".to_vec()));
@@ -295,8 +322,17 @@ impl Store {
     pub fn delete(&mut self, k: &[u8]) -> io::Result<()> {
         let mut index_block = 0;
         let index_offset = self.header.get_index_offset(k);
-        let mut buffer_pool = acquire_lock!(self.buffer_pool)?;
+        let mut buffer_pool: MutexGuard<'_, BufferPool> = acquire_lock!(self.buffer_pool)?;
 
+        // Update the search index in a separate thread.
+        let search_index = self.search_index.clone();
+        let k_copy = k.to_vec();
+        let search_handle = thread::spawn(move || {
+            let mut search_index: MutexGuard<'_, InvertedIndex> = acquire_lock!(search_index)?;
+            search_index.remove(&k_copy)
+        });
+
+        // delete from the scdb file
         while index_block < self.header.number_of_index_blocks {
             let index_offset = self
                 .header
@@ -314,7 +350,7 @@ impl Store {
             index_block += 1;
         }
 
-        Ok(())
+        search_handle.join().unwrap()
     }
 
     /// Clears all data in the store
@@ -330,7 +366,8 @@ impl Store {
     /// # use scdb::Store;
     /// #
     /// # fn main() -> std::io::Result<()> {
-    /// let mut  store = Store::new("db", None, None, None, None)?;
+    /// # let mut  store = Store::new("db", None, None, None, None, None)?;
+    /// # store.clear()?;
     /// # store.set(&b"foo"[..], &b"bar"[..], None)?;
     /// # store.set(&b"foo2"[..], &b"bar2"[..], None)?;
     /// // if (b"foo", b"bar"), (b"foo2", b"bar2") exist
@@ -344,8 +381,18 @@ impl Store {
     /// # }
     /// ```
     pub fn clear(&mut self) -> io::Result<()> {
-        let mut buffer_pool = acquire_lock!(self.buffer_pool)?;
-        buffer_pool.clear_file()
+        // Clear the search index in a separate thread
+        let search_index = self.search_index.clone();
+        let search_handle = thread::spawn(move || {
+            let mut search_index: MutexGuard<'_, InvertedIndex> = acquire_lock!(search_index)?;
+            search_index.clear()
+        });
+
+        // Clear the scdb file
+        let mut buffer_pool: MutexGuard<'_, BufferPool> = acquire_lock!(self.buffer_pool)?;
+        buffer_pool.clear_file()?;
+
+        search_handle.join().unwrap()
     }
 
     /// Manually removes dangling key-value pairs in the database file
@@ -375,14 +422,77 @@ impl Store {
     /// # use scdb::Store;
     /// #
     /// # fn main() -> std::io::Result<()> {
-    /// # let mut store = Store::new("db", None, None, None, None)?;
+    /// # let mut store = Store::new("db", None, None, None, None, None)?;
     /// store.compact()?;
     /// # Ok(())
     /// # }
     /// ```
     pub fn compact(&mut self) -> io::Result<()> {
-        let mut buffer_pool = acquire_lock!(self.buffer_pool)?;
-        buffer_pool.compact_file()
+        // Compact the scdb file
+        let mut buffer_pool: MutexGuard<'_, BufferPool> = acquire_lock!(self.buffer_pool)?;
+        let mut search_index: MutexGuard<'_, InvertedIndex> = acquire_lock!(self.search_index)?;
+        // Since compacting the db file disorganizes the addresses, we will rebuild
+        // the index every time compaction of db is done.
+        buffer_pool.compact_file(&mut search_index)
+    }
+
+    /// Searches for unexpired keys that start with the given search term
+    ///
+    /// It skips the first `skip` (default: 0) number of results and returns not more than
+    /// `limit` (default: 0) number of items. This is to avoid using up more memory than can be handled by the
+    /// host machine.
+    ///
+    /// If `limit` is 0, all items are returned since it would make no sense for someone to search
+    /// for zero items.
+    ///
+    /// returns a list of tuples of key-value
+    ///
+    /// # Errors
+    ///
+    /// It may fail with [std::io::Error] in case it cannot access the database file say if it deleted
+    /// or due to permissions errors.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use scdb::Store;
+    /// #
+    /// # fn main() -> std::io::Result<()> {
+    /// # let mut  store = Store::new("db", None, None, None, None, None)?;
+    /// # store.clear()?;   
+    /// // imagine the store has the following key value pairs
+    /// let data = vec![
+    ///     (&b"hi"[..], &b"ooliyo"[..]),
+    ///     (&b"high"[..], &b"haiguru"[..]),
+    ///     (&b"hind"[..], &b"enyuma"[..]),
+    ///     (&b"hill"[..], &b"akasozi"[..]),
+    ///     (&b"him"[..], &b"ogwo"[..]),
+    /// ];
+    /// # let mut expected: Vec<(Vec<u8>, Vec<u8>)> = vec![];
+    /// # for (k, v) in data {
+    /// #    store.set(k, v, None)?;
+    /// #    expected.push((k.to_vec(), v.to_vec()))
+    /// # }
+    /// // search for key-values where the keys start with 'hi'
+    /// let key_values = store.search(&b"hi"[..], 0, 0)?;
+    /// assert_eq!(key_values, expected);
+    ///
+    /// // Or just return a few of them, say last three
+    /// let key_values = store.search(&b"hi"[..], 2, 3)?;
+    /// assert_eq!(key_values, expected[2..]);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn search(
+        &mut self,
+        term: &[u8],
+        skip: u64,
+        limit: u64,
+    ) -> io::Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        let mut search_index = acquire_lock!(self.search_index)?;
+        let offsets = search_index.search(term, skip, limit)?;
+        let mut buffer_pool: MutexGuard<'_, BufferPool> = acquire_lock!(self.buffer_pool)?;
+        buffer_pool.get_many_key_values(&offsets)
     }
 }
 
@@ -412,19 +522,27 @@ impl Drop for Store {
 
 /// Initializes the scheduler that is to run the background task of compacting the store
 /// If interval (in seconds) passed is 0, No scheduler is created. The default interval is 1 hour
-fn initialize_compaction_scheduler(
+fn initialize_scheduler(
     interval: Option<u32>,
     buffer_pool: &Arc<Mutex<BufferPool>>,
+    search_index: &Arc<Mutex<InvertedIndex>>,
 ) -> Option<ScheduleHandle> {
     let interval = interval.unwrap_or(3_600u32);
 
     if interval > 0 {
         let mut scheduler = Scheduler::new();
         let buffer_pool = buffer_pool.clone();
+        let search_index = search_index.clone();
 
         scheduler.every(interval.seconds()).run(move || {
             let mut buffer_pool = acquire_lock!(buffer_pool).expect("get lock on buffer pool");
-            buffer_pool.compact_file().expect("compact file in thread")
+            // Since compacting the db file disorganizes the addresses, we will rebuild
+            // the index every time compaction of db is done
+            let mut search_index: MutexGuard<'_, InvertedIndex> =
+                acquire_lock!(search_index).expect("get lock on search index");
+            buffer_pool
+                .compact_file(&mut search_index)
+                .expect("compact db file in thread");
         });
 
         let handle = scheduler.watch_thread(Duration::from_millis(200));
@@ -460,10 +578,25 @@ mod tests {
         };
     }
 
+    /// Converts a string slice into bytes
+    macro_rules! str_to_bytes {
+        ($v:expr) => {
+            $v.to_string().into_bytes()
+        };
+    }
+
+    /// Converts an array of strings into a vector of byte arrays
+    macro_rules! to_byte_arrays_vector {
+        ($data:expr) => {
+            $data.map(|v| str_to_bytes!(v)).to_vec()
+        };
+    }
+
     #[test]
     #[serial]
     fn set_works() {
-        let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
         store.clear().expect("store failed to clear");
         let keys = get_keys();
         let values = get_values();
@@ -480,7 +613,8 @@ mod tests {
     #[test]
     #[serial]
     fn set_with_ttl_works() {
-        let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
         store.clear().expect("store failed to clear");
         let keys = get_keys();
         let values = get_values();
@@ -504,7 +638,8 @@ mod tests {
     #[test]
     #[serial]
     fn set_can_update() {
-        let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
         store.clear().expect("store failed to clear");
         let keys = get_keys();
         let values = get_values();
@@ -534,7 +669,8 @@ mod tests {
     #[test]
     #[serial]
     fn delete_works() {
-        let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
         store.clear().expect("store failed to clear");
         let keys = get_keys();
         let values = get_values();
@@ -557,7 +693,8 @@ mod tests {
     #[test]
     #[serial]
     fn clear_works() {
-        let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
         store.clear().expect("store failed to clear");
         let keys = get_keys();
         let values = get_values();
@@ -575,8 +712,226 @@ mod tests {
 
     #[test]
     #[serial]
+    fn search_works() {
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
+        store.clear().expect("store failed to clear");
+        let keys = to_byte_arrays_vector!(["foo", "fore", "bar", "band", "pig"]);
+        let values = to_byte_arrays_vector!(["eng", "span", "port", "nyoro", "dan"]);
+
+        insert_test_data(&mut store, &keys, &values, None);
+        let test_data = [
+            ("f", vec![("foo", "eng"), ("fore", "span")]),
+            ("fo", vec![("foo", "eng"), ("fore", "span")]),
+            ("foo", vec![("foo", "eng")]),
+            ("for", vec![("fore", "span")]),
+            ("b", vec![("bar", "port"), ("band", "nyoro")]),
+            ("ba", vec![("bar", "port"), ("band", "nyoro")]),
+            ("bar", vec![("bar", "port")]),
+            ("ban", vec![("band", "nyoro")]),
+            ("band", vec![("band", "nyoro")]),
+            ("p", vec![("pig", "dan")]),
+            ("pi", vec![("pig", "dan")]),
+            ("pig", vec![("pig", "dan")]),
+            ("pigg", vec![]),
+            ("food", vec![]),
+            ("bandana", vec![]),
+            ("bare", vec![]),
+        ];
+
+        for (term, expected) in test_data {
+            let expected: Vec<(Vec<u8>, Vec<u8>)> = expected
+                .into_iter()
+                .map(|(k, v)| (str_to_bytes!(k), str_to_bytes!(v)))
+                .collect();
+            let got = store
+                .search(&str_to_bytes!(term), 0, 0)
+                .expect(&format!("search for {}", term));
+            assert_eq!(&expected, &got);
+        }
+
+        fs::remove_dir_all(STORE_PATH).expect("delete store folder");
+    }
+
+    #[test]
+    #[serial]
+    fn search_works_after_expire() {
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
+        store.clear().expect("store failed to clear");
+        let keys = to_byte_arrays_vector!(["foo", "bar", "fore", "band", "pig"]);
+        let values = to_byte_arrays_vector!(["eng", "port", "span", "nyoro", "dan"]);
+
+        insert_test_data(
+            &mut store,
+            &keys[0..2].to_vec(),
+            &values[0..2].to_vec(),
+            Some(1),
+        );
+        insert_test_data(&mut store, &keys[2..].to_vec(), &values[2..].to_vec(), None);
+
+        // wait for expiry and some more just to be safe
+        thread::sleep(Duration::from_secs(2));
+
+        // expired items are ignored
+        let test_data = [
+            ("f", vec![("fore", "span")]),
+            ("fo", vec![("fore", "span")]),
+            ("foo", vec![]),
+            ("for", vec![("fore", "span")]),
+            ("b", vec![("band", "nyoro")]),
+            ("ba", vec![("band", "nyoro")]),
+            ("bar", vec![]),
+            ("ban", vec![("band", "nyoro")]),
+            ("band", vec![("band", "nyoro")]),
+            ("p", vec![("pig", "dan")]),
+            ("pi", vec![("pig", "dan")]),
+            ("pig", vec![("pig", "dan")]),
+            ("pigg", vec![]),
+            ("food", vec![]),
+            ("bandana", vec![]),
+            ("bare", vec![]),
+        ];
+
+        for (term, expected) in test_data {
+            let expected: Vec<(Vec<u8>, Vec<u8>)> = expected
+                .into_iter()
+                .map(|(k, v)| (str_to_bytes!(k), str_to_bytes!(v)))
+                .collect();
+            let got = store
+                .search(&str_to_bytes!(term), 0, 0)
+                .expect(&format!("search for {}", term));
+            assert_eq!(&expected, &got);
+        }
+
+        fs::remove_dir_all(STORE_PATH).expect("delete store folder");
+    }
+
+    #[test]
+    #[serial]
+    fn search_works_after_delete() {
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
+        store.clear().expect("store failed to clear");
+        let keys = to_byte_arrays_vector!(["foo", "fore", "bar", "band", "pig"]);
+        let values = to_byte_arrays_vector!(["eng", "span", "port", "nyoro", "dan"]);
+
+        insert_test_data(&mut store, &keys, &values, None);
+        delete_keys(&mut store, &to_byte_arrays_vector!(["foo", "bar", "band"]));
+        let test_data = [
+            ("f", vec![("fore", "span")]),
+            ("fo", vec![("fore", "span")]),
+            ("foo", vec![]),
+            ("for", vec![("fore", "span")]),
+            ("b", vec![]),
+            ("ba", vec![]),
+            ("bar", vec![]),
+            ("ban", vec![]),
+            ("band", vec![]),
+            ("p", vec![("pig", "dan")]),
+            ("pi", vec![("pig", "dan")]),
+            ("pig", vec![("pig", "dan")]),
+            ("pigg", vec![]),
+            ("food", vec![]),
+            ("bandana", vec![]),
+            ("bare", vec![]),
+        ];
+
+        for (term, expected) in test_data {
+            let expected: Vec<(Vec<u8>, Vec<u8>)> = expected
+                .into_iter()
+                .map(|(k, v)| (str_to_bytes!(k), str_to_bytes!(v)))
+                .collect();
+            let got = store
+                .search(&str_to_bytes!(term), 0, 0)
+                .expect(&format!("search for {}", term));
+            assert_eq!(&expected, &got);
+        }
+
+        fs::remove_dir_all(STORE_PATH).expect("delete store folder");
+    }
+
+    #[test]
+    #[serial]
+    fn search_works_after_clear() {
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
+        store.clear().expect("store failed to clear");
+        let keys = to_byte_arrays_vector!(["foo", "fore", "bar", "band", "pig"]);
+        let values = to_byte_arrays_vector!(["eng", "span", "port", "nyoro", "dan"]);
+
+        insert_test_data(&mut store, &keys, &values, None);
+        let test_data = [
+            "f", "fo", "foo", "for", "b", "ba", "bar", "ban", "band", "p", "pi", "pig", "pigg",
+            "food", "bandana", "bare",
+        ];
+        store.clear().expect("store cleared");
+        let expected: Vec<(Vec<u8>, Vec<u8>)> = vec![];
+
+        for term in test_data {
+            let got = store
+                .search(&str_to_bytes!(term), 0, 0)
+                .expect(&format!("search for {}", term));
+            assert_eq!(&expected, &got);
+        }
+
+        fs::remove_dir_all(STORE_PATH).expect("delete store folder");
+    }
+
+    #[test]
+    #[serial]
+    fn paginated_search_works() {
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
+        store.clear().expect("store failed to clear");
+        let keys = to_byte_arrays_vector!(["foo", "fore", "food", "bar", "band", "pig"]);
+        let values = to_byte_arrays_vector!(["eng", "span", "lug", "port", "nyoro", "dan"]);
+
+        insert_test_data(&mut store, &keys, &values, None);
+        let test_data = [
+            (
+                "fo",
+                0,
+                0,
+                vec![("foo", "eng"), ("fore", "span"), ("food", "lug")],
+            ),
+            (
+                "fo",
+                0,
+                8,
+                vec![("foo", "eng"), ("fore", "span"), ("food", "lug")],
+            ),
+            ("fo", 1, 8, vec![("fore", "span"), ("food", "lug")]),
+            ("fo", 1, 0, vec![("fore", "span"), ("food", "lug")]),
+            ("fo", 0, 2, vec![("foo", "eng"), ("fore", "span")]),
+            ("fo", 1, 2, vec![("fore", "span"), ("food", "lug")]),
+            ("fo", 0, 1, vec![("foo", "eng")]),
+            ("fo", 2, 1, vec![("food", "lug")]),
+            ("fo", 1, 1, vec![("fore", "span")]),
+        ];
+
+        for (term, skip, limit, expected) in test_data {
+            let expected: Vec<(Vec<u8>, Vec<u8>)> = expected
+                .into_iter()
+                .map(|(k, v)| (str_to_bytes!(k), str_to_bytes!(v)))
+                .collect();
+            let got = store
+                .search(&str_to_bytes!(term), skip, limit)
+                .expect(&format!(
+                    "search for {}, skip: {}, limit: {}",
+                    term, skip, limit
+                ));
+            assert_eq!(&expected, &got);
+        }
+
+        fs::remove_dir_all(STORE_PATH).expect("delete store folder");
+    }
+
+    #[test]
+    #[serial]
     fn persists_to_file() {
-        let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
         store
             .clear()
             .expect("store failed to get cleared for some reason");
@@ -586,7 +941,8 @@ mod tests {
         insert_test_data(&mut store, &keys, &values, None);
 
         // Open new store instance
-        let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
 
         let received_values = get_values_for_keys(&mut store, &keys);
         let expected_values = wrap_values_in_result(&values);
@@ -598,7 +954,8 @@ mod tests {
     #[test]
     #[serial]
     fn persists_to_file_after_delete() {
-        let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
         store.clear().expect("store failed to clear");
         let keys = get_keys();
         let values = get_values();
@@ -609,7 +966,8 @@ mod tests {
         delete_keys(&mut store, &keys_to_delete);
 
         // Open new store instance
-        let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
 
         let received_values = get_values_for_keys(&mut store, &keys);
         let mut expected_values = wrap_values_in_result(&values[..2]);
@@ -624,7 +982,8 @@ mod tests {
     #[test]
     #[serial]
     fn persists_to_file_after_clear() {
-        let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
         store.clear().expect("store failed to clear");
         let keys = get_keys();
         let values = get_values();
@@ -633,7 +992,8 @@ mod tests {
         store.clear().expect("store failed to clear");
 
         // Open new store instance
-        let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
 
         let received_values = get_values_for_keys(&mut store, &keys);
         let expected_values: Vec<io::Result<Option<Vec<u8>>>> =
@@ -646,11 +1006,12 @@ mod tests {
 
     #[test]
     #[serial]
-    fn compact_removes_deleted_and_expired_from_file() {
+    fn compact_removes_deleted_and_expired_from_db_file() {
         // pre-clean up for the right results
         fs::remove_dir_all(STORE_PATH).ok();
 
-        let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
         store.clear().expect("store failed to clear");
         let keys = get_keys();
         let values = get_values();
@@ -706,12 +1067,88 @@ mod tests {
 
     #[test]
     #[serial]
-    fn background_task_compacts() {
+    fn compact_removes_expired_from_search_index_file() {
+        // pre-clean up for the right results
+        fs::remove_dir_all(STORE_PATH).ok();
+
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
+        store.clear().expect("store failed to clear");
+        let keys = to_byte_arrays_vector!(["foo", "bar", "fore", "band", "pig"]);
+        let values = to_byte_arrays_vector!(["eng", "port", "span", "nyoro", "dan"]);
+
+        insert_test_data(
+            &mut store,
+            &keys[0..2].to_vec(),
+            &values[0..2].to_vec(),
+            Some(1),
+        );
+        insert_test_data(&mut store, &keys[2..].to_vec(), &values[2..].to_vec(), None);
+
+        let search_index = acquire_lock!(store.search_index).expect("acquire lock on search index");
+        let search_index_file_path = search_index.file_path.to_str().unwrap().to_owned();
+        drop(search_index);
+
+        // wait for some keys to expire
+        thread::sleep(Duration::from_secs(2));
+
+        let original_file_size = get_file_size(&search_index_file_path);
+
+        store.compact().expect("compact store");
+
+        let final_file_size = get_file_size(&search_index_file_path);
+        let expected_file_size_reduction = 282u64;
+
+        assert_eq!(
+            original_file_size - final_file_size,
+            expected_file_size_reduction
+        );
+
+        // And the search is still acting as before, with the expired not showing up
+        // expired items are ignored
+        let test_data = [
+            ("f", vec![("fore", "span")]),
+            ("fo", vec![("fore", "span")]),
+            ("foo", vec![]),
+            ("for", vec![("fore", "span")]),
+            ("b", vec![("band", "nyoro")]),
+            ("ba", vec![("band", "nyoro")]),
+            ("bar", vec![]),
+            ("ban", vec![("band", "nyoro")]),
+            ("band", vec![("band", "nyoro")]),
+            ("p", vec![("pig", "dan")]),
+            ("pi", vec![("pig", "dan")]),
+            ("pig", vec![("pig", "dan")]),
+            ("pigg", vec![]),
+            ("food", vec![]),
+            ("bandana", vec![]),
+            ("bare", vec![]),
+        ];
+
+        for (term, expected) in test_data {
+            let expected: Vec<(Vec<u8>, Vec<u8>)> = expected
+                .into_iter()
+                .map(|(k, v)| (str_to_bytes!(k), str_to_bytes!(v)))
+                .collect();
+            // Compaction of db file moves the addresses around, therefore it must also update the inverted db!
+            let got = store
+                .search(&str_to_bytes!(term), 0, 0)
+                .expect(&format!("search for {}", term));
+            assert_eq!(&expected, &got);
+        }
+
+        fs::remove_dir_all(STORE_PATH).expect("delete store folder");
+    }
+
+    #[test]
+    #[serial]
+    fn background_task_compacts_db_file() {
         // pre-clean up for the right results
         fs::remove_dir_all(STORE_PATH).ok();
 
         // set the compaction interval to 1 second
-        let mut store = Store::new(STORE_PATH, None, None, None, Some(1)).expect("create store");
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(1), None).expect("create store");
         store.clear().expect("store failed to clear");
         let keys = get_keys();
         let values = get_values();
@@ -733,8 +1170,6 @@ mod tests {
 
         // wait for some keys to expire
         thread::sleep(Duration::from_secs(4));
-
-        // store.compact().expect("compact store");
 
         let final_file_size = get_file_size(&db_file_path);
         let expected_file_size_reduction = keys[0..3]
@@ -761,6 +1196,82 @@ mod tests {
 
         assert_list_eq!(&expected_unchanged_values, &received_unchanged_values);
         assert_list_eq!(&expected_expired_values, &received_removed_values);
+
+        // ensure background tasks stop running
+        drop(store);
+
+        fs::remove_dir_all(STORE_PATH).expect("delete store folder");
+    }
+
+    #[test]
+    #[serial]
+    fn background_task_compacts_search_index_file() {
+        // pre-clean up for the right results
+        fs::remove_dir_all(STORE_PATH).ok();
+
+        // set the compaction interval to 1 second
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(1), None).expect("create store");
+        store.clear().expect("store failed to clear");
+        let keys = to_byte_arrays_vector!(["foo", "bar", "fore", "band", "pig"]);
+        let values = to_byte_arrays_vector!(["eng", "port", "span", "nyoro", "dan"]);
+
+        insert_test_data(
+            &mut store,
+            &keys[0..2].to_vec(),
+            &values[0..2].to_vec(),
+            Some(1),
+        );
+        insert_test_data(&mut store, &keys[2..].to_vec(), &values[2..].to_vec(), None);
+
+        let search_index = acquire_lock!(store.search_index).expect("acquire lock on search index");
+        let search_index_file_path = search_index.file_path.to_str().unwrap().to_owned();
+        drop(search_index);
+
+        let original_file_size = get_file_size(&search_index_file_path);
+
+        // wait for some keys to expire
+        thread::sleep(Duration::from_secs(4));
+
+        let final_file_size = get_file_size(&search_index_file_path);
+        let expected_file_size_reduction = 282u64;
+
+        assert_eq!(
+            original_file_size - final_file_size,
+            expected_file_size_reduction
+        );
+
+        // And the search is still acting as before, with the expired not showing up
+        // expired items are ignored
+        let test_data = [
+            ("f", vec![("fore", "span")]),
+            ("fo", vec![("fore", "span")]),
+            ("foo", vec![]),
+            ("for", vec![("fore", "span")]),
+            ("b", vec![("band", "nyoro")]),
+            ("ba", vec![("band", "nyoro")]),
+            ("bar", vec![]),
+            ("ban", vec![("band", "nyoro")]),
+            ("band", vec![("band", "nyoro")]),
+            ("p", vec![("pig", "dan")]),
+            ("pi", vec![("pig", "dan")]),
+            ("pig", vec![("pig", "dan")]),
+            ("pigg", vec![]),
+            ("food", vec![]),
+            ("bandana", vec![]),
+            ("bare", vec![]),
+        ];
+
+        for (term, expected) in test_data {
+            let expected: Vec<(Vec<u8>, Vec<u8>)> = expected
+                .into_iter()
+                .map(|(k, v)| (str_to_bytes!(k), str_to_bytes!(v)))
+                .collect();
+            let got = store
+                .search(&str_to_bytes!(term), 0, 0)
+                .expect(&format!("search for {}", term));
+            assert_eq!(&expected, &got);
+        }
 
         // ensure background tasks stop running
         drop(store);
@@ -815,25 +1326,19 @@ mod tests {
 
     /// Gets keys for testing
     fn get_keys() -> Vec<Vec<u8>> {
-        ["hey", "hi", "yoo-hoo", "bonjour", "oloota", "orirota"]
-            .into_iter()
-            .map(|v| v.to_string().into_bytes())
-            .collect()
+        to_byte_arrays_vector!(["hey", "hi", "yoo-hoo", "bonjour", "oloota", "orirota"])
     }
 
     /// Gets values for testing
     fn get_values() -> Vec<Vec<u8>> {
-        [
+        to_byte_arrays_vector!([
             "English",
             "English",
             "Slang",
             "French",
             "Runyoro",
             "Runyakole",
-        ]
-        .into_iter()
-        .map(|v| v.to_string().into_bytes())
-        .collect()
+        ])
     }
 
     /// Wraps values in Result<Option<T>>

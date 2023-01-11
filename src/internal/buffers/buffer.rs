@@ -1,4 +1,5 @@
-use crate::internal::entries::key_value::{KeyValueEntry, OFFSET_FOR_KEY_IN_KV_ARRAY};
+use crate::internal::entries::values::key_value::{KeyValueEntry, OFFSET_FOR_KEY_IN_KV_ARRAY};
+use crate::internal::entries::values::shared::ValueEntry;
 use crate::internal::macros::validate_bounds;
 use crate::internal::utils::TRUE_AS_BYTE;
 use std::cmp::min;

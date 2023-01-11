@@ -1,11 +1,12 @@
 use crate::internal::buffers::buffer::{Buffer, Value};
-use crate::internal::entries::db_file_header::HEADER_SIZE_IN_BYTES;
+use crate::internal::entries::headers::shared::{HEADER_SIZE_IN_BYTES, INDEX_ENTRY_SIZE_IN_BYTES};
 use crate::internal::entries::index::Index;
-use crate::internal::entries::key_value::OFFSET_FOR_KEY_IN_KV_ARRAY;
+use crate::internal::entries::values::key_value::OFFSET_FOR_KEY_IN_KV_ARRAY;
+use crate::internal::entries::values::shared::ValueEntry;
 use crate::internal::macros::validate_bounds;
 use crate::internal::utils::{get_vm_page_size, TRUE_AS_BYTE};
 use crate::internal::{
-    acquire_lock, slice_to_array, DbFileHeader, KeyValueEntry, INDEX_ENTRY_SIZE_IN_BYTES,
+    acquire_lock, slice_to_array, DbFileHeader, Header, InvertedIndex, KeyValueEntry,
 };
 use std::cmp::{max, min};
 use std::collections::{BTreeMap, VecDeque};
@@ -61,7 +62,7 @@ impl BufferPool {
 
         let header = if should_create_new {
             let header = DbFileHeader::new(max_keys, redundant_blocks, Some(buffer_size as u32));
-            initialize_db_file(&mut file, &header)?;
+            header.initialize_file(&mut file)?;
             header
         } else {
             DbFileHeader::from_file(&mut file)?
@@ -139,7 +140,7 @@ impl BufferPool {
     /// Clears all data on disk and memory making it like a new store
     pub(crate) fn clear_file(&mut self) -> io::Result<()> {
         let header = DbFileHeader::new(self.max_keys, self.redundant_blocks, None);
-        self.file_size = initialize_db_file(&mut self.file, &header)?;
+        self.file_size = header.initialize_file(&mut self.file)?;
         self.index_buffers.clear();
         self.kv_buffers.clear();
         Ok(())
@@ -147,7 +148,7 @@ impl BufferPool {
 
     /// This removes any deleted or expired entries from the file. It must first lock the buffer and the file.
     /// In order to be more efficient, it creates a new file, copying only that data which is not deleted or expired
-    pub(crate) fn compact_file(&mut self) -> io::Result<()> {
+    pub(crate) fn compact_file(&mut self, search_index: &mut InvertedIndex) -> io::Result<()> {
         let folder = self.file_path.parent().unwrap_or_else(|| Path::new("/"));
         let new_file_path = folder.join("tmp__compact.scdb");
         let mut new_file = OpenOptions::new()
@@ -170,6 +171,9 @@ impl BufferPool {
         let zero = vec![0u8; idx_entry_size];
         let mut idx_offset = HEADER_SIZE_IN_BYTES;
         let mut new_file_offset = header.key_values_start_point;
+
+        // clear the search index so as to begin its reconstruction
+        search_index.clear()?;
 
         for index_block in &mut index {
             let index_block = index_block?;
@@ -196,6 +200,11 @@ impl BufferPool {
                         // update index
                         new_file.seek(SeekFrom::Start(idx_offset))?;
                         new_file.write_all(&new_file_offset.to_be_bytes())?;
+
+                        // update search index
+                        search_index.add(kv.key, new_file_offset, kv.expiry)?;
+
+                        // move forward in iteration
                         new_file_offset += kv_size;
                     } else {
                         // if expired or deleted, update index to zero
@@ -297,7 +306,12 @@ impl BufferPool {
     /// This avoids duplicate entries for the same key being tracked in separate index entries
     ///
     /// It also returns false if the address goes beyond the size of the file
-    pub(crate) fn addr_belongs_to_key(&mut self, kv_address: u64, key: &[u8]) -> io::Result<bool> {
+    pub(crate) fn addr_belongs_to_key(
+        &mut self,
+        kv_address: &[u8],
+        key: &[u8],
+    ) -> io::Result<bool> {
+        let kv_address = u64::from_be_bytes(slice_to_array(kv_address)?);
         if kv_address >= self.file_size {
             return Ok(false);
         }
@@ -370,6 +384,46 @@ impl BufferPool {
 
         let data_array = buf[0..size].to_vec();
         Ok(data_array)
+    }
+
+    /// Gets all the key-value pairs that correspond to the given list of key-value addresses
+    pub(crate) fn get_many_key_values(
+        &mut self,
+        kv_addresses: &[u64],
+    ) -> io::Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        let mut results: Vec<(Vec<u8>, Vec<u8>)> = vec![];
+
+        for kv_address in kv_addresses {
+            let kv_address = *kv_address;
+            let size = self.read_kv_size(kv_address)?;
+            let buf = self.read_kv_bytes(kv_address, size)?;
+            let entry = KeyValueEntry::from_data_array(&buf, 0)?;
+
+            if !entry.is_expired() && !entry.is_deleted {
+                results.push((entry.key.to_vec(), entry.value.to_vec()));
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Reads the key-value byte array directly from file given address and size
+    #[inline(always)]
+    fn read_kv_bytes(&mut self, kv_address: u64, size: u32) -> io::Result<Vec<u8>> {
+        let mut buf = vec![0u8; size as usize];
+        self.file.seek(SeekFrom::Start(kv_address))?;
+        self.file.read_exact(&mut buf)?;
+        Ok(buf)
+    }
+
+    /// Reads the size of a key-value entry directly from file
+    #[inline(always)]
+    fn read_kv_size(&mut self, kv_address: u64) -> io::Result<u32> {
+        let mut size_buf = [0u8; 4];
+        self.file.seek(SeekFrom::Start(kv_address))?;
+        self.file.read_exact(&mut size_buf)?;
+        let size = u32::from_be_bytes(size_buf);
+        Ok(size)
     }
 }
 
@@ -448,27 +502,10 @@ fn get_kv_bytes(file: &Mutex<&File>, address: &[u8]) -> io::Result<Vec<u8>> {
     Ok(data)
 }
 
-/// Initializes the database file, giving it the header and the index place holders
-/// and truncating it. It returns the new file size
-fn initialize_db_file(file: &mut File, header: &DbFileHeader) -> io::Result<u64> {
-    let header_bytes = header.as_bytes();
-    let header_length = header_bytes.len() as u64;
-    debug_assert_eq!(header_length, 100);
-    let final_size = header_length + (header.number_of_index_blocks * header.net_block_size);
-
-    file.seek(SeekFrom::Start(0))?;
-    file.write_all(&header_bytes)?;
-    // shrink file if it is still long
-    file.set_len(header_length)?;
-    // expand file to expected value, filling the extras with 0s
-    file.set_len(final_size)?;
-    Ok(final_size)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::entries::key_value::KEY_VALUE_MIN_SIZE_IN_BYTES;
+    use crate::internal::entries::values::key_value::KEY_VALUE_MIN_SIZE_IN_BYTES;
     use crate::internal::get_current_timestamp;
     use serial_test::serial;
 
@@ -801,6 +838,7 @@ mod tests {
     #[serial]
     fn compact_file_works() {
         let file_name = "testdb.scdb";
+        let index_file_name = "testdb.iscdb";
         // pre-clean up for right results
         fs::remove_file(&file_name).ok();
 
@@ -831,8 +869,10 @@ mod tests {
         delete_key_value(&mut pool, &header, &deleted);
 
         let initial_file_size = get_actual_file_size(file_name);
+        let mut search_index = InvertedIndex::new(&Path::new(index_file_name), None, None, None)
+            .expect("create search index");
 
-        pool.compact_file().expect("compact file");
+        pool.compact_file(&mut search_index).expect("compact file");
 
         let final_file_size = get_actual_file_size(file_name);
         let (data_in_file, _) = read_from_file(file_name, 0, final_file_size as usize);
@@ -859,6 +899,7 @@ mod tests {
         assert!(!key_value_exists(&data_in_file, &header, &expired));
 
         fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
+        fs::remove_file(&index_file_name).expect(&format!("delete file {}", &file_name));
     }
 
     #[test]
@@ -963,6 +1004,136 @@ mod tests {
 
     #[test]
     #[serial]
+    fn get_many_key_values_works() {
+        let file_name = "testdb.scdb";
+        let test_data: Vec<(Vec<u8>, Vec<u8>)> = vec![
+            (b"kv".to_vec(), b"bar".to_vec()),
+            (b"hey".to_vec(), b"man".to_vec()),
+            (b"holla".to_vec(), b"pension".to_vec()),
+            (b"putty".to_vec(), b"6788".to_vec()),
+            (b"ninety-nine".to_vec(), b"millenium".to_vec()),
+        ];
+
+        let mut pool = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
+
+        let header = DbFileHeader::from_file(&mut pool.file).expect("get header");
+
+        let mut addresses: Vec<u64> = vec![];
+
+        for (k, v) in &test_data {
+            let kv = KeyValueEntry::new(k, v, 0);
+            insert_key_value_entry(&mut pool, &header, &kv);
+            let kv_address = get_kv_address(&mut pool, &header, &kv);
+            addresses.push(kv_address);
+        }
+
+        let got = pool
+            .get_many_key_values(&addresses)
+            .expect("get many key values");
+
+        assert_eq!(got, test_data);
+
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
+    }
+
+    #[test]
+    #[serial]
+    fn get_many_key_values_expired() {
+        let file_name = "testdb.scdb";
+        let non_expired: Vec<(Vec<u8>, Vec<u8>)> = vec![
+            (b"kv".to_vec(), b"bar".to_vec()),
+            (b"putty".to_vec(), b"6788".to_vec()),
+            (b"ninety-nine".to_vec(), b"millenium".to_vec()),
+        ];
+
+        let expired: Vec<(Vec<u8>, Vec<u8>)> = vec![
+            (b"hey".to_vec(), b"man".to_vec()),
+            (b"holla".to_vec(), b"pension".to_vec()),
+        ];
+
+        let mut pool = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
+
+        let header = DbFileHeader::from_file(&mut pool.file).expect("get header");
+
+        let mut addresses: Vec<u64> = vec![];
+
+        // Add non-expired
+        for (k, v) in &non_expired {
+            let kv = KeyValueEntry::new(k, v, 0);
+            insert_key_value_entry(&mut pool, &header, &kv);
+            let kv_address = get_kv_address(&mut pool, &header, &kv);
+            addresses.push(kv_address);
+        }
+
+        // Add expired
+        for (k, v) in &expired {
+            // 1666023836u64 is some past timestamp in October 2022 so this is expired
+            let kv = KeyValueEntry::new(k, v, 1666023836u64);
+            insert_key_value_entry(&mut pool, &header, &kv);
+            let kv_address = get_kv_address(&mut pool, &header, &kv);
+            addresses.push(kv_address);
+        }
+
+        let got = pool
+            .get_many_key_values(&addresses)
+            .expect("get many key values");
+
+        assert_eq!(got, non_expired);
+
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
+    }
+
+    #[test]
+    #[serial]
+    fn get_many_key_values_deleted() {
+        let file_name = "testdb.scdb";
+        let non_deleted: Vec<(Vec<u8>, Vec<u8>)> = vec![
+            (b"holla".to_vec(), b"pension".to_vec()),
+            (b"putty".to_vec(), b"6788".to_vec()),
+        ];
+
+        let deleted: Vec<(Vec<u8>, Vec<u8>)> = vec![
+            (b"kv".to_vec(), b"bar".to_vec()),
+            (b"hey".to_vec(), b"man".to_vec()),
+            (b"ninety-nine".to_vec(), b"millenium".to_vec()),
+        ];
+
+        let mut pool = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
+
+        let header = DbFileHeader::from_file(&mut pool.file).expect("get header");
+
+        let mut addresses: Vec<u64> = vec![];
+
+        for (k, v) in &non_deleted {
+            let kv = KeyValueEntry::new(k, v, 0);
+            insert_key_value_entry(&mut pool, &header, &kv);
+            let kv_address = get_kv_address(&mut pool, &header, &kv);
+            addresses.push(kv_address);
+        }
+
+        for (k, v) in &deleted {
+            let kv = KeyValueEntry::new(k, v, 0);
+            insert_key_value_entry(&mut pool, &header, &kv);
+            let kv_address = get_kv_address(&mut pool, &header, &kv);
+            addresses.push(kv_address);
+            pool.try_delete_kv_entry(kv_address, k)
+                .expect(&format!("try delete key: {:?} of addr {}", k, kv_address));
+        }
+
+        let got = pool
+            .get_many_key_values(&addresses)
+            .expect("get many key values");
+
+        assert_eq!(got, non_deleted);
+
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
+    }
+
+    #[test]
+    #[serial]
     fn addr_belongs_to_key_works() {
         let file_name = "testdb.scdb";
         let kv1 = KeyValueEntry::new(&b"never"[..], &b"bar"[..], 0);
@@ -975,19 +1146,19 @@ mod tests {
         insert_key_value_entry(&mut pool, &header, &kv1);
         insert_key_value_entry(&mut pool, &header, &kv2);
 
-        let kv1_index_address = get_kv_address(&mut pool, &header, &kv1);
-        let kv2_index_address = get_kv_address(&mut pool, &header, &kv2);
+        let kv1_index_address = get_kv_address_as_bytes(&mut pool, &header, &kv1);
+        let kv2_index_address = get_kv_address_as_bytes(&mut pool, &header, &kv2);
         assert!(pool
-            .addr_belongs_to_key(kv1_index_address, kv1.key)
+            .addr_belongs_to_key(&kv1_index_address, kv1.key)
             .expect("addr_belongs_to_key kv1"));
         assert!(pool
-            .addr_belongs_to_key(kv2_index_address, kv2.key)
+            .addr_belongs_to_key(&kv2_index_address, kv2.key)
             .expect("addr_belongs_to_key kv2"));
         assert!(!pool
-            .addr_belongs_to_key(kv1_index_address, kv2.key)
+            .addr_belongs_to_key(&kv1_index_address, kv2.key)
             .expect("addr_belongs_to_key kv1"));
         assert!(!pool
-            .addr_belongs_to_key(kv2_index_address, kv1.key)
+            .addr_belongs_to_key(&kv2_index_address, kv1.key)
             .expect("addr_belongs_to_key kv2"));
 
         fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
@@ -1005,10 +1176,10 @@ mod tests {
         let header = DbFileHeader::from_file(&mut pool.file).expect("get header");
 
         insert_key_value_entry(&mut pool, &header, &kv);
-        let kv_index_address = get_kv_address(&mut pool, &header, &kv);
+        let kv_index_address = get_kv_address_as_bytes(&mut pool, &header, &kv);
 
         assert!(pool
-            .addr_belongs_to_key(kv_index_address, kv.key)
+            .addr_belongs_to_key(&kv_index_address, kv.key)
             .expect("addr_belongs_to_key kv"));
 
         fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
@@ -1026,9 +1197,10 @@ mod tests {
 
         insert_key_value_entry(&mut pool, &header, &kv);
         let file_size = get_actual_file_size(file_name);
+        let file_size = file_size.to_be_bytes();
 
         assert!(!pool
-            .addr_belongs_to_key(file_size, kv.key)
+            .addr_belongs_to_key(&file_size, kv.key)
             .expect("addr_belongs_to_key kv"));
 
         fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
@@ -1228,8 +1400,12 @@ mod tests {
         }
     }
 
-    /// Returns the address for the given key value entry within the buffer pool
-    fn get_kv_address(pool: &mut BufferPool, header: &DbFileHeader, kv: &KeyValueEntry<'_>) -> u64 {
+    /// Returns the address byte array for the given key value entry within the buffer pool
+    fn get_kv_address_as_bytes(
+        pool: &mut BufferPool,
+        header: &DbFileHeader,
+        kv: &KeyValueEntry<'_>,
+    ) -> Vec<u8> {
         let mut kv_address = vec![0u8; INDEX_ENTRY_SIZE_IN_BYTES as usize];
         let index_address = header.get_index_offset(kv.key);
 
@@ -1240,6 +1416,12 @@ mod tests {
             .read(&mut kv_address)
             .expect("reads value at index address");
 
+        kv_address
+    }
+
+    /// Returns the address for the given key value entry within the buffer pool
+    fn get_kv_address(pool: &mut BufferPool, header: &DbFileHeader, kv: &KeyValueEntry<'_>) -> u64 {
+        let kv_address = get_kv_address_as_bytes(pool, header, kv);
         u64::from_be_bytes(slice_to_array(&kv_address[..]).expect("slice to array"))
     }
 }

@@ -4,4 +4,4 @@
 db/
 *.scdb
 testdb/
-set_testdb/
+testdb.iscdb

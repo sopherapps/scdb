@@ -1,7 +1,6 @@
-use crate::internal::DbFileHeader;
+use crate::internal::Header;
 use std::fs::File;
-use std::io;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::sync::Mutex;
 
 /// This is the Representation of the collection
@@ -15,10 +14,10 @@ pub(crate) struct Index<'a> {
 
 impl<'a> Index<'a> {
     /// Creates a new index instance
-    pub(crate) fn new(file: &'a Mutex<&'a File>, header: &DbFileHeader) -> Self {
+    pub(crate) fn new<T: Header>(file: &'a Mutex<&'a File>, header: &T) -> Self {
         Self {
-            num_of_blocks: header.number_of_index_blocks,
-            block_size: header.net_block_size,
+            num_of_blocks: header.get_number_of_index_blocks(),
+            block_size: header.get_net_block_size(),
             file,
             cursor: 0,
         }
