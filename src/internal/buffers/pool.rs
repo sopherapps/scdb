@@ -5,7 +5,9 @@ use crate::internal::entries::values::key_value::OFFSET_FOR_KEY_IN_KV_ARRAY;
 use crate::internal::entries::values::shared::ValueEntry;
 use crate::internal::macros::validate_bounds;
 use crate::internal::utils::{get_vm_page_size, TRUE_AS_BYTE};
-use crate::internal::{acquire_lock, slice_to_array, DbFileHeader, Header, KeyValueEntry};
+use crate::internal::{
+    acquire_lock, slice_to_array, DbFileHeader, Header, InvertedIndex, KeyValueEntry,
+};
 use std::cmp::{max, min};
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt::{Display, Formatter};
@@ -146,7 +148,7 @@ impl BufferPool {
 
     /// This removes any deleted or expired entries from the file. It must first lock the buffer and the file.
     /// In order to be more efficient, it creates a new file, copying only that data which is not deleted or expired
-    pub(crate) fn compact_file(&mut self) -> io::Result<()> {
+    pub(crate) fn compact_file(&mut self, search_index: &mut InvertedIndex) -> io::Result<()> {
         let folder = self.file_path.parent().unwrap_or_else(|| Path::new("/"));
         let new_file_path = folder.join("tmp__compact.scdb");
         let mut new_file = OpenOptions::new()
@@ -169,6 +171,9 @@ impl BufferPool {
         let zero = vec![0u8; idx_entry_size];
         let mut idx_offset = HEADER_SIZE_IN_BYTES;
         let mut new_file_offset = header.key_values_start_point;
+
+        // clear the search index so as to begin its reconstruction
+        search_index.clear()?;
 
         for index_block in &mut index {
             let index_block = index_block?;
@@ -195,6 +200,11 @@ impl BufferPool {
                         // update index
                         new_file.seek(SeekFrom::Start(idx_offset))?;
                         new_file.write_all(&new_file_offset.to_be_bytes())?;
+
+                        // update search index
+                        search_index.add(kv.key, new_file_offset, kv.expiry)?;
+
+                        // move forward in iteration
                         new_file_offset += kv_size;
                     } else {
                         // if expired or deleted, update index to zero
@@ -828,6 +838,7 @@ mod tests {
     #[serial]
     fn compact_file_works() {
         let file_name = "testdb.scdb";
+        let index_file_name = "testdb_search.iscdb";
         // pre-clean up for right results
         fs::remove_file(&file_name).ok();
 
@@ -858,8 +869,10 @@ mod tests {
         delete_key_value(&mut pool, &header, &deleted);
 
         let initial_file_size = get_actual_file_size(file_name);
+        let mut search_index = InvertedIndex::new(&Path::new(index_file_name), None, None, None)
+            .expect("create search index");
 
-        pool.compact_file().expect("compact file");
+        pool.compact_file(&mut search_index).expect("compact file");
 
         let final_file_size = get_actual_file_size(file_name);
         let (data_in_file, _) = read_from_file(file_name, 0, final_file_size as usize);

@@ -104,8 +104,7 @@ const ZERO_U64_BYTES: [u8; 8] = 0u64.to_be_bytes();
 pub struct Store {
     buffer_pool: Arc<Mutex<BufferPool>>,
     header: DbFileHeader,
-    db_scheduler: Option<ScheduleHandle>,
-    idx_scheduler: Option<ScheduleHandle>,
+    scheduler: Option<ScheduleHandle>,
     search_index: Arc<Mutex<InvertedIndex>>,
 }
 
@@ -158,14 +157,12 @@ impl Store {
         let header = extract_header_from_buffer_pool(&mut buffer_pool)?;
         let buffer_pool = Arc::new(Mutex::new(buffer_pool));
         let search_index = Arc::new(Mutex::new(search_index));
-        let db_scheduler = initialize_db_scheduler(compaction_interval, &buffer_pool);
-        let idx_scheduler = initialize_idx_scheduler(compaction_interval, &search_index);
+        let scheduler = initialize_scheduler(compaction_interval, &buffer_pool, &search_index);
 
         let store = Self {
             buffer_pool,
             header,
-            db_scheduler,
-            idx_scheduler,
+            scheduler,
             search_index,
         };
 
@@ -428,18 +425,12 @@ impl Store {
     /// # }
     /// ```
     pub fn compact(&mut self) -> io::Result<()> {
-        // Compact the search index file in a separate thread
-        let search_index = self.search_index.clone();
-        let search_handle = thread::spawn(move || {
-            let mut search_index: MutexGuard<'_, InvertedIndex> = acquire_lock!(search_index)?;
-            search_index.compact()
-        });
-
         // Compact the scdb file
         let mut buffer_pool: MutexGuard<'_, BufferPool> = acquire_lock!(self.buffer_pool)?;
-        buffer_pool.compact_file()?;
-
-        search_handle.join().unwrap()
+        let mut search_index: MutexGuard<'_, InvertedIndex> = acquire_lock!(self.search_index)?;
+        // Since compacting the db file disorganizes the addresses, we will rebuild
+        // the index every time compaction of db is done.
+        buffer_pool.compact_file(&mut search_index)
     }
 
     /// Searches for unexpired keys that start with the given search term
@@ -483,59 +474,35 @@ impl Display for Store {
 
 impl Drop for Store {
     fn drop(&mut self) {
-        if let Some(db_scheduler) = self.db_scheduler.take() {
-            db_scheduler.stop();
-        }
-
-        if let Some(idx_scheduler) = self.idx_scheduler.take() {
-            idx_scheduler.stop();
+        if let Some(scheduler) = self.scheduler.take() {
+            scheduler.stop();
         }
     }
 }
 
-/// Initializes the db_scheduler that is to run the background task of compacting the store
-/// If interval (in seconds) passed is 0, No db_scheduler is created. The default interval is 1 hour
-fn initialize_db_scheduler(
+/// Initializes the scheduler that is to run the background task of compacting the store
+/// If interval (in seconds) passed is 0, No scheduler is created. The default interval is 1 hour
+fn initialize_scheduler(
     interval: Option<u32>,
     buffer_pool: &Arc<Mutex<BufferPool>>,
-) -> Option<ScheduleHandle> {
-    let interval = interval.unwrap_or(3_600u32);
-
-    if interval > 0 {
-        let mut scheduler = Scheduler::new();
-        let buffer_pool = buffer_pool.clone();
-
-        scheduler.every(interval.seconds()).run(move || {
-            let mut buffer_pool = acquire_lock!(buffer_pool).expect("get lock on buffer pool");
-            buffer_pool
-                .compact_file()
-                .expect("compact db file in thread")
-        });
-
-        let handle = scheduler.watch_thread(Duration::from_millis(200));
-        Some(handle)
-    } else {
-        None
-    }
-}
-
-/// Initializes the idx_scheduler that is to run the background task of compacting the inverted index
-/// If interval (in seconds) passed is 0, No idx_scheduler is created. The default interval is 1 hour
-fn initialize_idx_scheduler(
-    interval: Option<u32>,
     search_index: &Arc<Mutex<InvertedIndex>>,
 ) -> Option<ScheduleHandle> {
     let interval = interval.unwrap_or(3_600u32);
 
     if interval > 0 {
         let mut scheduler = Scheduler::new();
+        let buffer_pool = buffer_pool.clone();
         let search_index = search_index.clone();
 
         scheduler.every(interval.seconds()).run(move || {
-            let mut search_index = acquire_lock!(search_index).expect("get lock on search index");
-            search_index
-                .compact()
-                .expect("compact inverted index file in thread")
+            let mut buffer_pool = acquire_lock!(buffer_pool).expect("get lock on buffer pool");
+            // Since compacting the db file disorganizes the addresses, we will rebuild
+            // the index every time compaction of db is done
+            let mut search_index: MutexGuard<'_, InvertedIndex> =
+                acquire_lock!(search_index).expect("get lock on search index");
+            buffer_pool
+                .compact_file(&mut search_index)
+                .expect("compact db file in thread");
         });
 
         let handle = scheduler.watch_thread(Duration::from_millis(200));
@@ -1123,7 +1090,6 @@ mod tests {
                 .into_iter()
                 .map(|(k, v)| (str_to_bytes!(k), str_to_bytes!(v)))
                 .collect();
-            // FIXME: Error: search for f: Error { kind: UnexpectedEof, message: "failed to fill whole buffer" }
             // Compaction of db file moves the addresses around, therefore it must also update the inverted db!
             let got = store
                 .search(&str_to_bytes!(term), 0, 0)
