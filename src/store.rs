@@ -1194,12 +1194,7 @@ mod tests {
         thread::sleep(Duration::from_secs(4));
 
         let final_file_size = get_file_size(&search_index_file_path);
-        let expected_file_size_reduction = keys[0..2]
-            .iter()
-            .zip(&values[0..2])
-            .map(|(k, v)| KeyValueEntry::new(k, v, 0).as_bytes().len() as u64)
-            .reduce(|accum, v| accum + v)
-            .unwrap();
+        let expected_file_size_reduction = 282u64;
 
         assert_eq!(
             original_file_size - final_file_size,

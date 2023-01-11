@@ -838,7 +838,7 @@ mod tests {
     #[serial]
     fn compact_file_works() {
         let file_name = "testdb.scdb";
-        let index_file_name = "testdb_search.iscdb";
+        let index_file_name = "testdb.iscdb";
         // pre-clean up for right results
         fs::remove_file(&file_name).ok();
 
@@ -899,6 +899,7 @@ mod tests {
         assert!(!key_value_exists(&data_in_file, &header, &expired));
 
         fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
+        fs::remove_file(&index_file_name).expect(&format!("delete file {}", &file_name));
     }
 
     #[test]
