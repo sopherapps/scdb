@@ -131,7 +131,7 @@ impl Store {
         redundant_blocks: Option<u16>,
         pool_capacity: Option<usize>,
         compaction_interval: Option<u32>,
-        max_search_index_key_length: Option<u32>,
+        max_index_key_len: Option<u32>,
     ) -> io::Result<Self> {
         let db_folder = Path::new(store_path);
         let db_file_path = db_folder.join(DEFAULT_DB_FILE);
@@ -149,7 +149,7 @@ impl Store {
 
         let search_index = InvertedIndex::new(
             &search_idx_file_path,
-            max_search_index_key_length,
+            max_index_key_len,
             max_keys,
             redundant_blocks,
         )?;
@@ -186,9 +186,10 @@ impl Store {
     /// # use scdb::Store;
     /// #
     /// # fn main() -> std::io::Result<()> {
-    /// # let mut  store = Store::new("db", None, None, None, None, None)?;
+    /// # let mut  store = Store::new("set_testdb", None, None, None, None, None)?;
     /// // set a key-value pair that never expires
-    /// store.set(&b"foo"[..], &b"bar"[..], None)?;    ///
+    /// store.set(&b"foo"[..], &b"bar"[..], None)?;
+    /// // FIXME: Error: Error { kind: UnexpectedEof, message: "failed to fill whole buffer" }
     /// # assert_eq!(store.get(&b"foo"[..])?, Some(b"bar".to_vec()));
     ///
     /// // set a key-value pair that expires after 5 seconds
@@ -252,7 +253,7 @@ impl Store {
     /// # use scdb::Store;
     /// #
     /// # fn main() -> std::io::Result<()> {
-    /// # let mut  store = Store::new("set_testdb", None, None, None, None, None)?;
+    /// # let mut  store = Store::new("get_testdb", None, None, None, None, None)?;
     /// # store.set(&b"foo"[..], &b"bar"[..], None)?;
     /// // if (b"foo", b"bar") exists,
     /// // the value returned will be Some(b"bar")
@@ -306,7 +307,7 @@ impl Store {
     /// # use scdb::Store;
     /// #
     /// # fn main() -> std::io::Result<()> {
-    /// # let mut  store = Store::new("db", None, None, None, None, None)?;
+    /// # let mut  store = Store::new("del_testdb", None, None, None, None, None)?;
     /// # store.set(&b"foo"[..], &b"bar"[..], None)?;
     /// // if (b"foo", b"bar") exists
     /// assert_eq!(store.get(&b"foo"[..])?, Some(b"bar".to_vec()));
@@ -364,7 +365,7 @@ impl Store {
     /// # use scdb::Store;
     /// #
     /// # fn main() -> std::io::Result<()> {
-    /// let mut  store = Store::new("db", None, None, None, None, None)?;
+    /// # let mut  store = Store::new("clear_testdb", None, None, None, None, None)?;
     /// # store.set(&b"foo"[..], &b"bar"[..], None)?;
     /// # store.set(&b"foo2"[..], &b"bar2"[..], None)?;
     /// // if (b"foo", b"bar"), (b"foo2", b"bar2") exist
@@ -419,7 +420,7 @@ impl Store {
     /// # use scdb::Store;
     /// #
     /// # fn main() -> std::io::Result<()> {
-    /// # let mut store = Store::new("db", None, None, None, None, None)?;
+    /// # let mut store = Store::new("compact_testdb", None, None, None, None, None)?;
     /// store.compact()?;
     /// # Ok(())
     /// # }
@@ -455,7 +456,8 @@ impl Store {
     /// # use scdb::Store;
     /// #
     /// # fn main() -> std::io::Result<()> {
-    /// # let mut  store = Store::new("set_testdb", None, None, None, None, None)?;    
+    /// # let mut  store = Store::new("search_testdb", None, None, None, None, None)?;
+    /// # store.clear()?;   
     /// // imagine the store has the following key value pairs
     /// let data = vec![
     ///     (&b"hi"[..], &b"ooliyo"[..]),
@@ -464,16 +466,18 @@ impl Store {
     ///     (&b"hill"[..], &b"akasozi"[..]),
     ///     (&b"him"[..], &b"ogwo"[..]),
     /// ];
+    /// # let mut expected: Vec<(Vec<u8>, Vec<u8>)> = vec![];
     /// # for (k, v) in data {
     /// #    store.set(k, v, None)?;
+    /// #    expected.push((k.to_vec(), v.to_vec()))
     /// # }
     /// // search for key-values where the keys start with 'hi'
     /// let key_values = store.search(&b"hi"[..], 0, 0)?;
-    /// assert_eq!(key_values, data);
+    /// assert_eq!(key_values, expected);
     ///
     /// // Or just return a few of them, say last three
     /// let key_values = store.search(&b"hi"[..], 2, 3)?;
-    /// assert_eq!(key_values, data[2..]);
+    /// assert_eq!(key_values, expected[2..]);
     /// # Ok(())
     /// # }
     /// ```

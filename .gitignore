@@ -6,3 +6,4 @@ db/
 testdb/
 set_testdb/
 testdb.iscdb
+*_testdb/

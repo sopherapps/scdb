@@ -46,7 +46,8 @@ Next:
                             Some(1000), // `max_keys`
                             Some(1), // `redundant_blocks`
                             Some(10), // `pool_capacity`
-                            Some(1800))?; // `compaction_interval`
+                            Some(1800), // `compaction_interval`
+                            Some(3))?; // `max_index_key_len`
     let key = b"foo";
     let value = b"bar";
 
@@ -66,6 +67,16 @@ Next:
     // Updating the values is just like inserting them. Any key-value already in the store will
     // be overwritten
     store.set(&key[..], &value[..], None)?;
+
+    // Searching for all keys starting with a given substring is also possible.
+    // We can paginate the results.
+    // let's skip the first matched item, and return only upto to 2 items
+    let results = store.search(&b"f"[..], 1, 2)?;
+    # assert_eq!(results, vec![]);
+
+    // Or let's just return all matched items
+    let results = store.search(&b"f"[..], 0, 0)?;
+    # assert_eq!(results, vec![(key.to_vec(), value.to_vec())]);
 
     // Delete the key-value pair by supplying the key as an argument to store.delete
     store.delete(&key[..])?;

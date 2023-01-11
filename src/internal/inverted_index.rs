@@ -779,15 +779,6 @@ mod tests {
         fs::remove_file(&search.file_path).expect(&format!("delete file {:?}", &search.file_path));
     }
 
-    /// Returns the actual file size of the file at the given path
-    fn get_file_size(file_path: &Path) -> u64 {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .open(file_path)
-            .expect(&format!("open file {:?}", file_path.as_os_str()));
-        file.seek(SeekFrom::End(0)).expect("get file size")
-    }
-
     /// Initializes a new SearchIndex and adds the given test_data
     fn create_search_index(file_name: &str, test_data: &Vec<(&str, u64, u64)>) -> InvertedIndex {
         let mut search = InvertedIndex::new(&Path::new(file_name), None, None, None)
