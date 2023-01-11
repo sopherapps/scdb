@@ -30,7 +30,7 @@ impl DbFileHeader {
         let redundant_blocks = redundant_blocks.unwrap_or(DEFAULT_DB_REDUNDANT_BLOCKS);
         let block_size = block_size.unwrap_or_else(utils::get_vm_page_size);
         let derived_props = DerivedHeaderProps::new(block_size, max_keys, redundant_blocks);
-        let header = Self {
+        Self {
             title: "Scdb versn 0.001".to_string(),
             block_size,
             max_keys,
@@ -39,9 +39,7 @@ impl DbFileHeader {
             number_of_index_blocks: derived_props.number_of_index_blocks,
             key_values_start_point: derived_props.values_start_point,
             net_block_size: derived_props.net_block_size,
-        };
-
-        header
+        }
     }
 }
 

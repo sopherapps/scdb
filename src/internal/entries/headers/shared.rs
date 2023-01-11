@@ -105,11 +105,11 @@ impl DerivedHeaderProps {
             + redundant_blocks as u64;
         let net_block_size = items_per_index_block * INDEX_ENTRY_SIZE_IN_BYTES;
         let values_start_point = HEADER_SIZE_IN_BYTES + (net_block_size * number_of_index_blocks);
-        return Self {
+        Self {
             items_per_index_block,
             number_of_index_blocks,
             net_block_size,
             values_start_point,
-        };
+        }
     }
 }

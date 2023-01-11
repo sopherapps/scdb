@@ -34,7 +34,7 @@ impl InvertedIndexHeader {
         let block_size = block_size.unwrap_or_else(utils::get_vm_page_size);
         let derived_props = DerivedHeaderProps::new(block_size, max_keys, redundant_blocks);
 
-        let header = Self {
+        Self {
             title: "ScdbIndex v0.001".to_string(),
             block_size,
             max_keys,
@@ -44,9 +44,7 @@ impl InvertedIndexHeader {
             values_start_point: derived_props.values_start_point,
             net_block_size: derived_props.net_block_size,
             max_index_key_len,
-        };
-
-        header
+        }
     }
 }
 

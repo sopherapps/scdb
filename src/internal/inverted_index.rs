@@ -1,17 +1,14 @@
 use crate::internal::entries::headers::inverted_index_header::InvertedIndexHeader;
 use crate::internal::entries::headers::shared::{HEADER_SIZE_IN_BYTES, INDEX_ENTRY_SIZE_IN_BYTES};
-use crate::internal::entries::index::Index;
 use crate::internal::entries::values::inverted_index_entry::InvertedIndexEntry;
-use crate::internal::macros::{acquire_lock, validate_bounds};
+use crate::internal::macros::validate_bounds;
 use crate::internal::utils::get_vm_page_size;
 use crate::internal::{slice_to_array, Header, ValueEntry};
-use memchr;
+use memchr::memmem;
 use std::cmp::min;
-use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 const ZERO_U64_BYTES: [u8; 8] = 0u64.to_be_bytes();
 
@@ -203,7 +200,7 @@ impl InvertedIndex {
         root_addr: &[u8],
         key: &[u8],
     ) -> io::Result<()> {
-        let mut root_addr = u64::from_be_bytes(slice_to_array(&root_addr[..])?);
+        let mut root_addr = u64::from_be_bytes(slice_to_array(root_addr)?);
         let mut addr = root_addr;
         loop {
             let entry_bytes = read_entry_bytes(&mut self.file, addr)?;
@@ -277,16 +274,16 @@ impl InvertedIndex {
     fn get_matched_kv_addrs_for_prefix(
         &mut self,
         term: &[u8],
-        prefix_root_addr: &Vec<u8>,
+        prefix_root_addr: &[u8],
         skip: u64,
         limit: u64,
     ) -> io::Result<Vec<u64>> {
         let mut matched_addresses: Vec<u64> = vec![];
-        let term_finder = memchr::memmem::Finder::new(term);
+        let term_finder = memmem::Finder::new(term);
         let mut skipped = 0u64;
         let should_slice = limit > 0;
 
-        let root_addr = u64::from_be_bytes(slice_to_array(&prefix_root_addr[..])?);
+        let root_addr = u64::from_be_bytes(slice_to_array(prefix_root_addr)?);
         let mut addr = root_addr;
         loop {
             let entry_bytes = read_entry_bytes(&mut self.file, addr)?;
@@ -310,7 +307,7 @@ impl InvertedIndex {
                 break;
             }
         }
-        return Ok(matched_addresses);
+        Ok(matched_addresses)
     }
 
     /// Updates an existing entry whose prefix (or index key) is given and key is also as given.
@@ -326,7 +323,7 @@ impl InvertedIndex {
         kv_address: u64,
         expiry: u64,
     ) -> io::Result<()> {
-        let root_address = u64::from_be_bytes(slice_to_array(&root_address[..])?);
+        let root_address = u64::from_be_bytes(slice_to_array(root_address)?);
         let mut addr = root_address;
 
         loop {
