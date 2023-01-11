@@ -378,10 +378,42 @@ impl BufferPool {
 
     /// Gets all the key-value pairs that correspond to the given list of key-value addresses
     pub(crate) fn get_many_key_values(
-        &self,
+        &mut self,
         kv_addresses: &[u64],
     ) -> io::Result<Vec<(Vec<u8>, Vec<u8>)>> {
-        todo!()
+        let mut results: Vec<(Vec<u8>, Vec<u8>)> = vec![];
+
+        for kv_address in kv_addresses {
+            let kv_address = *kv_address;
+            let size = self.read_kv_size(kv_address)?;
+            let buf = self.read_kv_bytes(kv_address, size)?;
+            let entry = KeyValueEntry::from_data_array(&buf, 0)?;
+
+            if !entry.is_expired() && !entry.is_deleted {
+                results.push((entry.key.to_vec(), entry.value.to_vec()));
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Reads the key-value byte array directly from file given address and size
+    #[inline(always)]
+    fn read_kv_bytes(&mut self, kv_address: u64, size: u32) -> io::Result<Vec<u8>> {
+        let mut buf = vec![0u8; size as usize];
+        self.file.seek(SeekFrom::Start(kv_address))?;
+        self.file.read_exact(&mut buf)?;
+        Ok(buf)
+    }
+
+    /// Reads the size of a key-value entry directly from file
+    #[inline(always)]
+    fn read_kv_size(&mut self, kv_address: u64) -> io::Result<u32> {
+        let mut size_buf = [0u8; 4];
+        self.file.seek(SeekFrom::Start(kv_address))?;
+        self.file.read_exact(&mut size_buf)?;
+        let size = u32::from_be_bytes(size_buf);
+        Ok(size)
     }
 }
 
@@ -952,6 +984,136 @@ mod tests {
 
         let got = pool.get_value(kv_address, kv.key).expect("get value");
         assert!(got.is_none());
+
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
+    }
+
+    #[test]
+    #[serial]
+    fn get_many_key_values_works() {
+        let file_name = "testdb.scdb";
+        let test_data: Vec<(Vec<u8>, Vec<u8>)> = vec![
+            (b"kv".to_vec(), b"bar".to_vec()),
+            (b"hey".to_vec(), b"man".to_vec()),
+            (b"holla".to_vec(), b"pension".to_vec()),
+            (b"putty".to_vec(), b"6788".to_vec()),
+            (b"ninety-nine".to_vec(), b"millenium".to_vec()),
+        ];
+
+        let mut pool = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
+
+        let header = DbFileHeader::from_file(&mut pool.file).expect("get header");
+
+        let mut addresses: Vec<u64> = vec![];
+
+        for (k, v) in &test_data {
+            let kv = KeyValueEntry::new(k, v, 0);
+            insert_key_value_entry(&mut pool, &header, &kv);
+            let kv_address = get_kv_address(&mut pool, &header, &kv);
+            addresses.push(kv_address);
+        }
+
+        let got = pool
+            .get_many_key_values(&addresses)
+            .expect("get many key values");
+
+        assert_eq!(got, test_data);
+
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
+    }
+
+    #[test]
+    #[serial]
+    fn get_many_key_values_expired() {
+        let file_name = "testdb.scdb";
+        let non_expired: Vec<(Vec<u8>, Vec<u8>)> = vec![
+            (b"kv".to_vec(), b"bar".to_vec()),
+            (b"putty".to_vec(), b"6788".to_vec()),
+            (b"ninety-nine".to_vec(), b"millenium".to_vec()),
+        ];
+
+        let expired: Vec<(Vec<u8>, Vec<u8>)> = vec![
+            (b"hey".to_vec(), b"man".to_vec()),
+            (b"holla".to_vec(), b"pension".to_vec()),
+        ];
+
+        let mut pool = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
+
+        let header = DbFileHeader::from_file(&mut pool.file).expect("get header");
+
+        let mut addresses: Vec<u64> = vec![];
+
+        // Add non-expired
+        for (k, v) in &non_expired {
+            let kv = KeyValueEntry::new(k, v, 0);
+            insert_key_value_entry(&mut pool, &header, &kv);
+            let kv_address = get_kv_address(&mut pool, &header, &kv);
+            addresses.push(kv_address);
+        }
+
+        // Add expired
+        for (k, v) in &expired {
+            // 1666023836u64 is some past timestamp in October 2022 so this is expired
+            let kv = KeyValueEntry::new(k, v, 1666023836u64);
+            insert_key_value_entry(&mut pool, &header, &kv);
+            let kv_address = get_kv_address(&mut pool, &header, &kv);
+            addresses.push(kv_address);
+        }
+
+        let got = pool
+            .get_many_key_values(&addresses)
+            .expect("get many key values");
+
+        assert_eq!(got, non_expired);
+
+        fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
+    }
+
+    #[test]
+    #[serial]
+    fn get_many_key_values_deleted() {
+        let file_name = "testdb.scdb";
+        let non_deleted: Vec<(Vec<u8>, Vec<u8>)> = vec![
+            (b"holla".to_vec(), b"pension".to_vec()),
+            (b"putty".to_vec(), b"6788".to_vec()),
+        ];
+
+        let deleted: Vec<(Vec<u8>, Vec<u8>)> = vec![
+            (b"kv".to_vec(), b"bar".to_vec()),
+            (b"hey".to_vec(), b"man".to_vec()),
+            (b"ninety-nine".to_vec(), b"millenium".to_vec()),
+        ];
+
+        let mut pool = BufferPool::new(None, &Path::new(file_name), None, None, None)
+            .expect("new buffer pool");
+
+        let header = DbFileHeader::from_file(&mut pool.file).expect("get header");
+
+        let mut addresses: Vec<u64> = vec![];
+
+        for (k, v) in &non_deleted {
+            let kv = KeyValueEntry::new(k, v, 0);
+            insert_key_value_entry(&mut pool, &header, &kv);
+            let kv_address = get_kv_address(&mut pool, &header, &kv);
+            addresses.push(kv_address);
+        }
+
+        for (k, v) in &deleted {
+            let kv = KeyValueEntry::new(k, v, 0);
+            insert_key_value_entry(&mut pool, &header, &kv);
+            let kv_address = get_kv_address(&mut pool, &header, &kv);
+            addresses.push(kv_address);
+            pool.try_delete_kv_entry(kv_address, k)
+                .expect(&format!("try delete key: {:?} of addr {}", k, kv_address));
+        }
+
+        let got = pool
+            .get_many_key_values(&addresses)
+            .expect("get many key values");
+
+        assert_eq!(got, non_deleted);
 
         fs::remove_file(&file_name).expect(&format!("delete file {}", &file_name));
     }

@@ -458,7 +458,7 @@ impl Store {
     ) -> io::Result<Vec<(Vec<u8>, Vec<u8>)>> {
         let mut search_index = acquire_lock!(self.search_index)?;
         let offsets = search_index.search(term, skip, limit)?;
-        let buffer_pool: MutexGuard<'_, BufferPool> = acquire_lock!(self.buffer_pool)?;
+        let mut buffer_pool: MutexGuard<'_, BufferPool> = acquire_lock!(self.buffer_pool)?;
         return buffer_pool.get_many_key_values(&offsets);
     }
 }
