@@ -2,6 +2,13 @@ use scdb::Store;
 use std::thread;
 use std::time::Duration;
 
+/// Converts a byte array to string
+macro_rules! to_str {
+    ($arr:expr) => {
+        std::str::from_utf8($arr).expect("bytes to str")
+    };
+}
+
 /// Prints data from store to the screen in a pretty way
 macro_rules! pprint_data {
     ($title:expr, $data:expr) => {
@@ -12,7 +19,7 @@ macro_rules! pprint_data {
         for (k, got) in $data {
             let got_str = match got {
                 None => "None",
-                Some(v) => std::str::from_utf8(v).expect("bytes to str"),
+                Some(v) => to_str!(v),
             };
             println!("For key: '{}', str: '{}', raw: '{:?}',", k, got_str, got);
         }
@@ -24,7 +31,7 @@ fn main() {
     // One very important config is `max_keys`. With it, you can limit the store size to a number of keys.
     // By default, the limit is 1 million keys
     let mut store =
-        Store::new("db", Some(1000), Some(1), Some(10), Some(1800)).expect("create store");
+        Store::new("db", Some(1000), Some(1), Some(10), Some(1800), Some(3)).expect("create store");
     let records = [
         ("hey", "English"),
         ("hi", "English"),
@@ -79,6 +86,30 @@ fn main() {
 
     let data = get_all(&mut store, &keys);
     pprint_data!("After updating keys", &data);
+
+    // Full-text search by key. It returns array of key-value tuples.
+    let data = store
+        .search(&b"h"[..], 0, 0)
+        .expect("search for keys starting with h");
+    println!("\nSearching for keys starting with 'h'");
+    println!("=======================================",);
+    for (k, v) in &data {
+        // note that to_str! is a custom macro changing byte array to UTF-8 string
+        println!("{}: {}", to_str!(k), to_str!(v))
+    }
+
+    // Search with pagination
+    let data = store
+        .search(&b"h"[..], 1, 1)
+        .expect("search for keys starting with h");
+    println!("\nPaginated search for keys starting with 'h'");
+    println!("==============================================",);
+    println!("Skipping 1, returning 1 record only");
+    println!("---");
+    for (k, v) in &data {
+        // note that to_str! is a custom macro changing byte array to UTF-8 string
+        println!("{}: {}", to_str!(k), to_str!(v))
+    }
 
     // Deleting some values
     let keys_to_delete = ["oi", "hi"];
