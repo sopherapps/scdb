@@ -9,7 +9,7 @@ const STORE_PATH: &str = "testdb";
 
 // Setting
 fn setting_without_ttl_benchmark(c: &mut Criterion) {
-    let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+    let mut store = Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
     store.clear().expect("clear store");
     let records = get_records();
     for (k, v) in &records {
@@ -23,7 +23,7 @@ fn setting_without_ttl_benchmark(c: &mut Criterion) {
 }
 
 fn setting_with_ttl_benchmark(c: &mut Criterion) {
-    let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+    let mut store = Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
     store.clear().expect("clear store");
     let ttl = Some(3_600u64);
     let records = get_records();
@@ -39,7 +39,7 @@ fn setting_with_ttl_benchmark(c: &mut Criterion) {
 
 // Updating
 fn updating_without_ttl_benchmark(c: &mut Criterion) {
-    let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+    let mut store = Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
     store.clear().expect("clear store");
     let records = get_records();
     let updates = get_updates();
@@ -58,7 +58,7 @@ fn updating_without_ttl_benchmark(c: &mut Criterion) {
 }
 
 fn updating_with_ttl_benchmark(c: &mut Criterion) {
-    let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+    let mut store = Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
     store.clear().expect("clear store");
     let records = get_records();
     let updates = get_updates();
@@ -76,7 +76,7 @@ fn updating_with_ttl_benchmark(c: &mut Criterion) {
 
 // Getting
 fn getting_without_ttl_benchmark(c: &mut Criterion) {
-    let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+    let mut store = Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
     store.clear().expect("clear store");
     let records = get_records();
     for (k, v) in &records {
@@ -92,7 +92,7 @@ fn getting_without_ttl_benchmark(c: &mut Criterion) {
 }
 
 fn getting_with_ttl_benchmark(c: &mut Criterion) {
-    let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+    let mut store = Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
     store.clear().expect("clear store");
     let records = get_records();
     let ttl = Some(3_600u64);
@@ -108,10 +108,55 @@ fn getting_with_ttl_benchmark(c: &mut Criterion) {
     }
 }
 
+// Searching
+fn searching_without_pagination_benchmark(c: &mut Criterion) {
+    let mut store = Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
+    store.clear().expect("clear store");
+    let records = get_records();
+    for (k, v) in &records {
+        store.set(k, v, None).expect(&format!("set {:?}", k));
+    }
+
+    for (k, _) in &records {
+        let term = &k[..1];
+        c.bench_function(
+            &format!(
+                "search (not paged): '{}'",
+                String::from_utf8(term.to_vec()).unwrap()
+            ),
+            |b| {
+                b.iter_with_large_drop(|| store.search(black_box(term), black_box(0), black_box(0)))
+            },
+        );
+    }
+}
+
+fn searching_with_pagination_benchmark(c: &mut Criterion) {
+    let mut store = Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
+    store.clear().expect("clear store");
+    let records = get_records();
+    for (k, v) in &records {
+        store.set(k, v, None).expect(&format!("set {:?}", k));
+    }
+
+    for (k, _) in &records {
+        let term = &k[..1];
+        c.bench_function(
+            &format!(
+                "search (paged): '{}'",
+                String::from_utf8(term.to_vec()).unwrap()
+            ),
+            |b| {
+                b.iter_with_large_drop(|| store.search(black_box(term), black_box(1), black_box(2)))
+            },
+        );
+    }
+}
+
 // Deleting
 fn deleting_without_ttl_benchmark(c: &mut Criterion) {
     let records = get_records();
-    let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+    let mut store = Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
     store.clear().expect("clear store");
     for (k, v) in &records {
         store.set(k, v, None).expect(&format!("set {:?}", k));
@@ -131,7 +176,7 @@ fn deleting_without_ttl_benchmark(c: &mut Criterion) {
 fn deleting_with_ttl_benchmark(c: &mut Criterion) {
     let records = get_records();
     let ttl = Some(3_600u64);
-    let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+    let mut store = Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
     store.clear().expect("clear store");
     for (k, v) in &records {
         store.set(k, v, ttl).expect(&format!("set {:?}", k));
@@ -151,7 +196,7 @@ fn clearing_without_ttl_benchmark(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let mut store =
-                    Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+                    Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
                 store.clear().expect("clear store");
                 let records = get_records();
                 for (k, v) in &records {
@@ -170,7 +215,7 @@ fn clearing_with_ttl_benchmark(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let mut store =
-                    Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+                    Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
                 store.clear().expect("clear store");
                 let records = get_records();
                 let ttl = Some(3_600u64);
@@ -187,7 +232,7 @@ fn clearing_with_ttl_benchmark(c: &mut Criterion) {
 
 // Compacting
 fn compacting_benchmark(c: &mut Criterion) {
-    let mut store = Store::new(STORE_PATH, None, None, None, Some(0)).expect("create store");
+    let mut store = Store::new(STORE_PATH, None, None, None, Some(0), None).expect("create store");
     store.clear().expect("clear store");
     let records = get_records();
     for (k, v) in &records[..3] {
@@ -241,6 +286,8 @@ criterion_group!(
     updating_with_ttl_benchmark,
     getting_without_ttl_benchmark,
     getting_with_ttl_benchmark,
+    searching_without_pagination_benchmark,
+    searching_with_pagination_benchmark,
     deleting_without_ttl_benchmark,
     deleting_with_ttl_benchmark,
     clearing_without_ttl_benchmark,
