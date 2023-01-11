@@ -443,6 +443,40 @@ impl Store {
     /// for zero items.
     ///
     /// returns a list of tuples of key-value
+    ///
+    /// # Errors
+    ///
+    /// It may fail with [std::io::Error] in case it cannot access the database file say if it deleted
+    /// or due to permissions errors.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use scdb::Store;
+    /// #
+    /// # fn main() -> std::io::Result<()> {
+    /// # let mut  store = Store::new("set_testdb", None, None, None, None, None)?;    
+    /// // imagine the store has the following key value pairs
+    /// let data = vec![
+    ///     (&b"hi"[..], &b"ooliyo"[..]),
+    ///     (&b"high"[..], &b"haiguru"[..]),
+    ///     (&b"hind"[..], &b"enyuma"[..]),
+    ///     (&b"hill"[..], &b"akasozi"[..]),
+    ///     (&b"him"[..], &b"ogwo"[..]),
+    /// ];
+    /// # for (k, v) in data {
+    /// #    store.set(k, v, None)?;
+    /// # }
+    /// // search for key-values where the keys start with 'hi'
+    /// let key_values = store.search(&b"hi"[..], 0, 0)?;
+    /// assert_eq!(key_values, data);
+    ///
+    /// // Or just return a few of them, say last three
+    /// let key_values = store.search(&b"hi"[..], 2, 3)?;
+    /// assert_eq!(key_values, data[2..]);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn search(
         &mut self,
         term: &[u8],
@@ -452,7 +486,7 @@ impl Store {
         let mut search_index = acquire_lock!(self.search_index)?;
         let offsets = search_index.search(term, skip, limit)?;
         let mut buffer_pool: MutexGuard<'_, BufferPool> = acquire_lock!(self.buffer_pool)?;
-        return buffer_pool.get_many_key_values(&offsets);
+        buffer_pool.get_many_key_values(&offsets)
     }
 }
 
