@@ -186,10 +186,9 @@ impl Store {
     /// # use scdb::Store;
     /// #
     /// # fn main() -> std::io::Result<()> {
-    /// # let mut  store = Store::new("set_testdb", None, None, None, None, None)?;
+    /// # let mut  store = Store::new("db", None, None, None, None, None)?;
     /// // set a key-value pair that never expires
     /// store.set(&b"foo"[..], &b"bar"[..], None)?;
-    /// // FIXME: Error: Error { kind: UnexpectedEof, message: "failed to fill whole buffer" }
     /// # assert_eq!(store.get(&b"foo"[..])?, Some(b"bar".to_vec()));
     ///
     /// // set a key-value pair that expires after 5 seconds
@@ -253,7 +252,8 @@ impl Store {
     /// # use scdb::Store;
     /// #
     /// # fn main() -> std::io::Result<()> {
-    /// # let mut  store = Store::new("get_testdb", None, None, None, None, None)?;
+    /// # let mut  store = Store::new("db", None, None, None, None, None)?;
+    /// # store.clear()?;
     /// # store.set(&b"foo"[..], &b"bar"[..], None)?;
     /// // if (b"foo", b"bar") exists,
     /// // the value returned will be Some(b"bar")
@@ -307,7 +307,8 @@ impl Store {
     /// # use scdb::Store;
     /// #
     /// # fn main() -> std::io::Result<()> {
-    /// # let mut  store = Store::new("del_testdb", None, None, None, None, None)?;
+    /// # let mut  store = Store::new("db", None, None, None, None, None)?;
+    /// # store.clear()?;
     /// # store.set(&b"foo"[..], &b"bar"[..], None)?;
     /// // if (b"foo", b"bar") exists
     /// assert_eq!(store.get(&b"foo"[..])?, Some(b"bar".to_vec()));
@@ -365,7 +366,8 @@ impl Store {
     /// # use scdb::Store;
     /// #
     /// # fn main() -> std::io::Result<()> {
-    /// # let mut  store = Store::new("clear_testdb", None, None, None, None, None)?;
+    /// # let mut  store = Store::new("db", None, None, None, None, None)?;
+    /// # store.clear()?;
     /// # store.set(&b"foo"[..], &b"bar"[..], None)?;
     /// # store.set(&b"foo2"[..], &b"bar2"[..], None)?;
     /// // if (b"foo", b"bar"), (b"foo2", b"bar2") exist
@@ -420,7 +422,7 @@ impl Store {
     /// # use scdb::Store;
     /// #
     /// # fn main() -> std::io::Result<()> {
-    /// # let mut store = Store::new("compact_testdb", None, None, None, None, None)?;
+    /// # let mut store = Store::new("db", None, None, None, None, None)?;
     /// store.compact()?;
     /// # Ok(())
     /// # }
@@ -456,7 +458,7 @@ impl Store {
     /// # use scdb::Store;
     /// #
     /// # fn main() -> std::io::Result<()> {
-    /// # let mut  store = Store::new("search_testdb", None, None, None, None, None)?;
+    /// # let mut  store = Store::new("db", None, None, None, None, None)?;
     /// # store.clear()?;   
     /// // imagine the store has the following key value pairs
     /// let data = vec![

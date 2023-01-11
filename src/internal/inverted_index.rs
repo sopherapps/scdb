@@ -204,6 +204,11 @@ impl InvertedIndex {
         let mut addr = root_addr;
         loop {
             let entry_bytes = read_entry_bytes(&mut self.file, addr)?;
+            if entry_bytes.is_none() {
+                break;
+            }
+
+            let entry_bytes = entry_bytes.unwrap();
             let mut entry = InvertedIndexEntry::from_data_array(&entry_bytes, 0)?;
 
             if entry.key == key {
@@ -212,7 +217,7 @@ impl InvertedIndex {
 
                 // Deal with next item
                 if next_addr != addr {
-                    let next_entry_bytes = read_entry_bytes(&mut self.file, next_addr)?;
+                    let next_entry_bytes = try_read_entry_bytes(&mut self.file, next_addr)?;
                     let mut next_entry = InvertedIndexEntry::from_data_array(&next_entry_bytes, 0)?;
 
                     next_entry.previous_offset = entry.previous_offset;
@@ -234,7 +239,7 @@ impl InvertedIndex {
 
                 // Deal with previous item
                 if previous_addr != addr {
-                    let prev_entry_bytes = read_entry_bytes(&mut self.file, previous_addr)?;
+                    let prev_entry_bytes = try_read_entry_bytes(&mut self.file, previous_addr)?;
                     let mut previous_entry =
                         InvertedIndexEntry::from_data_array(&prev_entry_bytes, 0)?;
 
@@ -287,6 +292,11 @@ impl InvertedIndex {
         let mut addr = root_addr;
         loop {
             let entry_bytes = read_entry_bytes(&mut self.file, addr)?;
+            if entry_bytes.is_none() {
+                break;
+            }
+
+            let entry_bytes = entry_bytes.unwrap();
             let entry = InvertedIndexEntry::from_data_array(&entry_bytes, 0)?;
 
             if !entry.is_expired() && term_finder.find(entry.key).is_some() {
@@ -328,6 +338,11 @@ impl InvertedIndex {
 
         loop {
             let entry_bytes = read_entry_bytes(&mut self.file, addr)?;
+            if entry_bytes.is_none() {
+                break;
+            }
+
+            let entry_bytes = entry_bytes.unwrap();
             let mut entry = InvertedIndexEntry::from_data_array(&entry_bytes, 0)?;
 
             if entry.key == key {
@@ -354,7 +369,7 @@ impl InvertedIndex {
                 entry.update_next_offset_on_file(&mut self.file, addr, self.file_size)?;
 
                 // update the root entry to have its previous offset point to the newly added entry
-                let root_entry_bytes = read_entry_bytes(&mut self.file, root_address)?;
+                let root_entry_bytes = try_read_entry_bytes(&mut self.file, root_address)?;
                 let root_entry = InvertedIndexEntry::from_data_array(&root_entry_bytes, 0)?;
                 root_entry.update_previous_offset_on_file(
                     &mut self.file,
@@ -364,6 +379,7 @@ impl InvertedIndex {
 
                 // increment file size by the new entry's size
                 self.file_size += new_entry_len as u64;
+
                 break;
             }
 
@@ -463,18 +479,36 @@ impl PartialEq for InvertedIndex {
     }
 }
 
-/// Reads a byte array for an entry at the given address in a file
-pub fn read_entry_bytes(file: &mut File, address: u64) -> io::Result<Vec<u8>> {
+/// Reads a byte array for an entry at the given address in a file.
+/// It returns None if the data ended prematurely
+fn read_entry_bytes(file: &mut File, address: u64) -> io::Result<Option<Vec<u8>>> {
     let mut size_buf = [0u8; 4];
     file.seek(SeekFrom::Start(address))?;
     file.read_exact(&mut size_buf)?;
-    let size = u32::from_be_bytes(size_buf);
+    let size = u32::from_be_bytes(size_buf) as usize;
 
-    let mut buf = vec![0u8; size as usize];
+    let mut buf = vec![0u8; size];
     file.seek(SeekFrom::Start(address))?;
-    file.read_exact(&mut buf)?;
+    let bytes_read = file.read(&mut buf)?;
 
-    Ok(buf)
+    let v = if bytes_read == size { Some(buf) } else { None };
+
+    Ok(v)
+}
+
+/// Reads an entry's byte array. It throws an error if the data read is cut off
+/// prematurely
+///
+/// # Errors
+/// It may throw [io::Error] of [io::ErrorKind::UnexpectedEof] if data being read
+/// is cut off. It may also throw [io::Error]'s of other kinds e.g. permissions
+fn try_read_entry_bytes(file: &mut File, address: u64) -> io::Result<Vec<u8>> {
+    let bytes = read_entry_bytes(file, address)?;
+    if bytes.is_none() {
+        return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
+    }
+
+    Ok(bytes.unwrap())
 }
 
 /// Writes a given entry to the file at the given address, returning the number of bytes written
@@ -494,8 +528,6 @@ fn write_entry_to_file(
 mod tests {
     use super::*;
     use std::fs;
-    use std::fs::OpenOptions;
-    use std::io::{Seek, SeekFrom};
 
     use crate::internal::entries::headers::inverted_index_header::{
         InvertedIndexHeader, DEFAULT_MAX_INDEX_KEY_LEN,
