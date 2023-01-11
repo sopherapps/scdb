@@ -740,6 +740,9 @@ mod tests {
         );
         insert_test_data(&mut store, &keys[2..].to_vec(), &values[2..].to_vec(), None);
 
+        // wait for expiry and some more just to be safe
+        thread::sleep(Duration::from_secs(2));
+
         // expired items are ignored
         let test_data = [
             ("f", vec![("fore", "span")]),
