@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2023-01-11
+
+### Added
+
+- Added full-text search for keys, with pagination using `store.search(term, skip, limit)`
+
+### Changed
+
+- Changed the `Store::new()` signature to include `max_search_index_key_length` option.
+
+### Fixed
+
 ## [0.0.2] - 2022-11-09
 
 ### Added
