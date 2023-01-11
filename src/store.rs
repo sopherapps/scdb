@@ -871,12 +871,7 @@ mod tests {
                 8,
                 vec![("foo", "eng"), ("fore", "span"), ("food", "lug")],
             ),
-            (
-                "fo",
-                1,
-                8,
-                vec![("foo", "eng"), ("fore", "span"), ("food", "lug")],
-            ),
+            ("fo", 1, 8, vec![("fore", "span"), ("food", "lug")]),
             ("fo", 1, 0, vec![("fore", "span"), ("food", "lug")]),
             ("fo", 0, 2, vec![("foo", "eng"), ("fore", "span")]),
             ("fo", 1, 2, vec![("fore", "span"), ("food", "lug")]),
