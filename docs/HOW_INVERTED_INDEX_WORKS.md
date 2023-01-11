@@ -40,7 +40,7 @@ _ = map[string][]int{
 
 ## Operations
 
-There are six main operations
+There are five main operations
 
 ### 1. Initialization
 
@@ -220,33 +220,7 @@ handle hash collisions. Having multiple index blocks is a form of separate chain
     - k = `number_of_index_blocks`
     - n = length of the longest `db_key` in the linked list of values accessed.
 
-### 5. Compact
-
-Compaction can run automatically every few hours. During that time, the search would be locked. No read, nor write would
-be allowed. Compaction can also be started by the user.
-
-1. Create new file
-2. Copy header into the new file
-3. Copy index into new file. This done index block by block.
-4. In each index block, find any non-zero index entries. For each of these:
-    - extract the entries as one contiguous yet doubly linked array, ignoring all that are expired
-    - write the array to the new file, with each item physically following the previous (i.e. contiguous)
-    - update the new file's last offset to include the newly added items
-6. Update file_size to the new file's file size
-7. Point the inverted index's file to that new file
-8. Delete the old file
-9. Rename the new file to the old file's name
-
-#### Performance
-
-- Time complexity: This operation is O(kn) where:
-    - k = number of prefixes in the file before compaction
-    - n = number of items in the longest linked list in the file before compaction.
-- Auxiliary space: This operation is O(k+n) where:
-    - k = `number_of_index_blocks` * `block_size`
-    - n = length of the longest `db_key` in the linked list of values accessed.
-
-### 6. Clear
+### 5. Clear
 
 Clear the entire database.
 
