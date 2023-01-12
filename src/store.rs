@@ -762,12 +762,7 @@ mod tests {
         let keys = to_byte_arrays_vector!(["foo", "bar", "fore", "band", "pig"]);
         let values = to_byte_arrays_vector!(["eng", "port", "span", "nyoro", "dan"]);
 
-        insert_test_data(
-            &mut store,
-            &keys[0..2].to_vec(),
-            &values[0..2].to_vec(),
-            Some(1),
-        );
+        insert_test_data(&mut store, &keys.to_vec(), &values.to_vec(), Some(1));
         insert_test_data(&mut store, &keys[2..].to_vec(), &values[2..].to_vec(), None);
 
         // wait for expiry and some more just to be safe
