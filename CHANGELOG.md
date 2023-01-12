@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2023-01-12
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed issue with calling `InvertedIndex.add` with same key would delete keys that were added first, but which shared
+  prefixes with that key e.g. `bar` would be deleted from the index (but not from the store) if `bare` was `add`ed twice.
+
 ## [0.1.0] - 2023-01-11
 
 ### Added
