@@ -43,7 +43,7 @@ Find the following documentation sites, depending on the programming language.
 
   ```toml
   [dependencies]
-  scdb = { version = "0.0.1" }
+  scdb = { version = "0.1" }
   ```
 
 - Update your `src/main.rs` to the following.

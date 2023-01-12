@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.2] - 2023-01-12
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Bumped `clokwerk` to version 0.4 to fix [Seg fault in the time package](https://github.com/sopherapps/py_scdb/security/dependabot/2)
+
+
 ## [0.1.1] - 2023-01-12
 
 ### Added
