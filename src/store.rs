@@ -48,7 +48,7 @@ const ZERO_U64_BYTES: [u8; 8] = 0u64.to_be_bytes();
 ///                                                     A new key-value pair is created and the old one is left unindexed.
 ///                                                     Compaction is important because it reclaims this space and reduces the size
 ///                                                     of the database file.
-/// - `max_index_key_len` - default 3: The maximum number of characters in the each key in the search inverted index
+/// - `max_index_key_len` - default 3: The maximum number of characters in each key in the search inverted index
 ///                                             The inverted index is used for full-text search of keys to get all key-values
 ///                                             whose keys start with a given byte array.
 ///

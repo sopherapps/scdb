@@ -212,6 +212,9 @@ impl InvertedIndex {
 
                 // Deal with next item
                 if next_addr != addr {
+                    // FIXME: If we shifted the offsets to above the key in the Entry Format, we might
+                    //      just need to use the offset + a CONSTANT to update previous or next offsets,
+                    //      or even isDeleted, isRoot and the like
                     let next_entry_bytes = read_entry_bytes(&mut self.file, next_addr)?;
                     let mut next_entry = InvertedIndexEntry::from_data_array(&next_entry_bytes, 0)?;
 
@@ -233,7 +236,10 @@ impl InvertedIndex {
                 };
 
                 // Deal with previous item
-                if previous_addr != addr {
+                if previous_addr != addr && previous_addr != next_addr {
+                    // FIXME: If we shifted the offsets to above the key in the Entry Format, we might
+                    //      just need to use the offset + a CONSTANT to update previous or next offsets,
+                    //      or even isDeleted, isRoot and the like
                     let prev_entry_bytes = read_entry_bytes(&mut self.file, previous_addr)?;
                     let mut previous_entry =
                         InvertedIndexEntry::from_data_array(&prev_entry_bytes, 0)?;
@@ -243,6 +249,7 @@ impl InvertedIndex {
                 };
 
                 // Deal with current item
+                // FIXME: It might be faster to update the IsDeleted directly on file
                 entry.is_deleted = true;
                 write_entry_to_file(&mut self.file, addr, &entry)?;
 
@@ -666,7 +673,7 @@ mod tests {
         let updates = vec![
             ("foo", 20, now - 30),    // expired
             ("bare", 90, now - 7200), // expired
-            ("bar", 600, now + 3600),
+            ("bar", 500, now + 3600),
         ];
 
         let mut search = create_search_index(file_name, &test_data);
@@ -683,9 +690,9 @@ mod tests {
             (("for", 0, 0), vec![160]),
             (("food", 0, 0), vec![60]),
             (("fore", 0, 0), vec![160]),
-            (("b", 0, 0), vec![600, 900]),
-            (("ba", 0, 0), vec![600, 900]),
-            (("bar", 0, 0), vec![600, 900]),
+            (("b", 0, 0), vec![500, 900]),
+            (("ba", 0, 0), vec![500, 900]),
+            (("bar", 0, 0), vec![500, 900]),
             (("bare", 0, 0), vec![]),
             (("barr", 0, 0), vec![900]),
             (("p", 0, 0), vec![80]),
