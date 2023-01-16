@@ -744,6 +744,20 @@ mod tests {
 
     #[test]
     #[serial]
+    fn search_errs_when_disabled() {
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), false).expect("create store");
+        store.clear().expect("store failed to clear");
+        let keys = to_byte_arrays_vector!(["foo", "fore", "bar", "band", "pig"]);
+        let values = to_byte_arrays_vector!(["eng", "span", "port", "nyoro", "dan"]);
+
+        insert_test_data(&mut store, &keys, &values, None);
+        assert!(store.search(&b"f".to_vec(), 0, 0).is_err());
+        fs::remove_dir_all(STORE_PATH).expect("delete store folder");
+    }
+
+    #[test]
+    #[serial]
     fn search_works() {
         let mut store =
             Store::new(STORE_PATH, None, None, None, Some(0), true).expect("create store");
