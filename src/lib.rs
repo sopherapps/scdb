@@ -17,6 +17,8 @@ Of course to make it a little more appealing, it has some extra features like:
 
 - Time-to-live (TTL) where a key-value pair expires after a given time.
   Useful when used as a cache.
+- Searching for keys beginning with a given subsequence. [`is_search_enabled` param of `scdb::new()` must be true.]
+  Note: **Enabling searching makes `set`, `delete`, `clear` and `compact` slower than if it were disabled.**
 - Non-blocking reads from separate processes, and threads.
   Useful in multithreaded applications
 - Fast Sequential writes to the store, queueing any writes from multiple processes and threads.
@@ -47,7 +49,8 @@ Next:
                             Some(1), // `redundant_blocks`
                             Some(10), // `pool_capacity`
                             Some(1800), // `compaction_interval`
-                            Some(3))?; // `max_index_key_len`
+                            true)?; // `is_search_enabled` (if true, set, clear and delete
+                                    // are slower)
     let key = b"foo";
     let value = b"bar";
 

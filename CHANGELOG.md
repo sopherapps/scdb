@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2023-01-16
+
+### Added
+
+### Changed
+
+- Changed the `Store::new()` signature, replacing `max_index_key_len` option with `is_search_enabled`.
+- Permanently set the maximum index key length to 3
+- Changed benchmarks to compare operations when search is enabled to when search is disabled.
+- Enhanced accuracy of benchmarks for the `delete`, and `set` operations.
+
+### Fixed
+
 ## [0.1.2] - 2023-01-12
 
 ### Added
@@ -15,7 +28,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
-- Bumped `clokwerk` to version 0.4 to fix [Seg fault in the time package](https://github.com/sopherapps/py_scdb/security/dependabot/2)
+- Bumped `clokwerk` to version 0.4 to
+  fix [Seg fault in the time package](https://github.com/sopherapps/py_scdb/security/dependabot/2)
 
 
 ## [0.1.1] - 2023-01-12
@@ -37,7 +51,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Changed
 
-- Changed the `Store::new()` signature to include `max_search_index_key_length` option.
+- Changed the `Store::new()` signature to include `max_index_key_len` option.
 
 ### Fixed
 

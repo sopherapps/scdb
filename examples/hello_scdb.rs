@@ -31,7 +31,7 @@ fn main() {
     // One very important config is `max_keys`. With it, you can limit the store size to a number of keys.
     // By default, the limit is 1 million keys
     let mut store =
-        Store::new("db", Some(1000), Some(1), Some(10), Some(1800), Some(3)).expect("create store");
+        Store::new("db", Some(1000), Some(1), Some(10), Some(1800), true).expect("create store");
     let records = [
         ("hey", "English"),
         ("hi", "English"),

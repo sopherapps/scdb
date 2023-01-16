@@ -23,6 +23,7 @@ Of course to make it a little more appealing, it has some extra features like:
 - Time-to-live (TTL) where a key-value pair expires after a given time
 - Non-blocking reads from separate processes, and threads.
 - Fast Sequential writes to the store, queueing any writes from multiple processes and threads.
+- Optional searching of keys that begin with a given subsequence. This option is turned on when `scdb::new()` is called.
 
 ## Documentation
 
@@ -82,7 +83,7 @@ fn main() {
   // One very important config is `max_keys`. With it, you can limit the store size to a number of keys.
   // By default, the limit is 1 million keys
   let mut store =
-          Store::new("db", Some(1000), Some(1), Some(10), Some(1800), Some(3)).expect("create store");
+          Store::new("db", Some(1000), Some(1), Some(10), Some(1800), true).expect("create store");
   let records = [
     ("hey", "English"),
     ("hi", "English"),
@@ -263,83 +264,92 @@ Here are those that have been developed:
 On an average PC (i7Core, 16GB RAM):
 
 ``` 
-set(no ttl): 'hey'      time:   [38.292 µs 38.395 µs 38.514 µs]
-set(no ttl): 'hi'       time:   [28.639 µs 28.694 µs 28.755 µs]
-set(no ttl): 'salut'    time:   [38.959 µs 39.052 µs 39.153 µs]
-set(no ttl): 'bonjour'  time:   [38.394 µs 38.485 µs 38.582 µs]
-set(no ttl): 'hola'     time:   [38.514 µs 38.612 µs 38.722 µs]
-set(no ttl): 'oi'       time:   [28.407 µs 28.473 µs 28.541 µs]
-set(no ttl): 'mulimuta' time:   [38.179 µs 38.259 µs 38.345 µs]
-set(ttl): 'hey'         time:   [38.300 µs 38.349 µs 38.400 µs]
-set(ttl): 'hi'          time:   [28.439 µs 28.561 µs 28.748 µs]
-set(ttl): 'salut'       time:   [38.395 µs 38.463 µs 38.535 µs]
-set(ttl): 'bonjour'     time:   [38.378 µs 38.452 µs 38.547 µs]
-set(ttl): 'hola'        time:   [38.211 µs 38.317 µs 38.448 µs]
-set(ttl): 'oi'          time:   [28.488 µs 28.743 µs 29.127 µs]
-set(ttl): 'mulimuta'    time:   [38.359 µs 38.491 µs 38.635 µs]
-update(no ttl): 'hey'   time:   [38.065 µs 38.160 µs 38.258 µs]
-update(no ttl): 'hi'    time:   [28.550 µs 28.677 µs 28.875 µs]
-update(no ttl): 'hola'  time:   [38.634 µs 38.716 µs 38.801 µs]
-update(no ttl): 'oi'    time:   [28.353 µs 28.411 µs 28.475 µs]
-update(no ttl): 'mulimuta'
-                        time:   [38.447 µs 38.534 µs 38.624 µs]
-update(ttl): 'hey'      time:   [38.565 µs 38.637 µs 38.713 µs]
-update(ttl): 'hi'       time:   [28.659 µs 28.725 µs 28.796 µs]
-update(ttl): 'hola'     time:   [38.550 µs 38.620 µs 38.697 µs]
-update(ttl): 'oi'       time:   [28.647 µs 28.707 µs 28.772 µs]
-update(ttl): 'mulimuta' time:   [38.481 µs 38.554 µs 38.633 µs]
-get(no ttl): 'hey'      time:   [197.75 ns 198.13 ns 198.54 ns]
-get(no ttl): 'hi'       time:   [197.95 ns 198.32 ns 198.72 ns]
-get(no ttl): 'salut'    time:   [198.65 ns 199.10 ns 199.56 ns]
-get(no ttl): 'bonjour'  time:   [198.83 ns 199.23 ns 199.63 ns]
-get(no ttl): 'hola'     time:   [200.66 ns 201.69 ns 202.76 ns]
-get(no ttl): 'oi'       time:   [197.60 ns 198.17 ns 198.82 ns]
-get(no ttl): 'mulimuta' time:   [200.80 ns 201.33 ns 201.99 ns]
-get(with ttl): 'hey'    time:   [235.18 ns 236.47 ns 237.75 ns]
-get(with ttl): 'hi'     time:   [232.61 ns 233.05 ns 233.55 ns]
-get(with ttl): 'salut'  time:   [233.03 ns 233.45 ns 233.87 ns]
+set(no ttl): 'foo'      time:   [8.4622 µs 9.3052 µs 10.396 µs]
+set(ttl): 'foo'         time:   [9.0695 µs 9.2830 µs 9.5413 µs]
+set(no ttl) with search: 'foo'
+                        time:   [40.573 µs 41.152 µs 41.825 µs]
+set(ttl) with search: 'foo'
+                        time:   [42.494 µs 43.880 µs 45.353 µs]
+update(no ttl): 'foo'   time:   [8.0398 µs 8.1054 µs 8.1814 µs]
+update(ttl): 'fenecans' time:   [8.2151 µs 8.3078 µs 8.4137 µs]
+update(no ttl) with search: 'foo'
+                        time:   [40.757 µs 40.854 µs 40.960 µs]
+update(ttl) with search: 'fenecans'
+                        time:   [40.901 µs 40.985 µs 41.076 µs]
+                        time:   [7.9638 µs 8.0066 µs 8.0609 µs]
+get(no ttl): 'hey'      time:   [209.98 ns 213.70 ns 218.01 ns]
+get(no ttl): 'hi'       time:   [205.34 ns 207.45 ns 209.70 ns]
+get(no ttl): 'salut'    time:   [203.01 ns 204.54 ns 206.45 ns]
+get(no ttl): 'bonjour'  time:   [206.43 ns 208.68 ns 210.97 ns]
+get(no ttl): 'hola'     time:   [268.69 ns 297.50 ns 334.32 ns]
+get(no ttl): 'oi'       time:   [192.04 ns 192.62 ns 193.25 ns]
+get(no ttl): 'mulimuta' time:   [202.74 ns 203.14 ns 203.56 ns]
+get(with ttl): 'hey'    time:   [230.27 ns 230.65 ns 231.06 ns]
+get(with ttl): 'hi'     time:   [229.39 ns 229.89 ns 230.50 ns]
+get(with ttl): 'salut'  time:   [231.72 ns 232.10 ns 232.51 ns]
 get(with ttl): 'bonjour'
-                        time:   [235.68 ns 236.10 ns 236.59 ns]
-get(with ttl): 'hola'   time:   [234.36 ns 234.71 ns 235.08 ns]
-get(with ttl): 'oi'     time:   [240.90 ns 243.92 ns 247.12 ns]
-
+                        time:   [232.30 ns 232.68 ns 233.10 ns]
+get(with ttl): 'hola'   time:   [231.98 ns 232.56 ns 233.16 ns]
+get(with ttl): 'oi'     time:   [228.74 ns 229.30 ns 229.87 ns]
 get(with ttl): 'mulimuta'
-                        time:   [239.99 ns 242.52 ns 245.61 ns]
-search (not paged): 'h' time:   [17.980 µs 18.016 µs 18.055 µs]
+                        time:   [237.61 ns 237.94 ns 238.29 ns]
+get(no ttl) with search: 'hey'
+                        time:   [194.52 ns 194.86 ns 195.25 ns]
+get(no ttl) with search: 'hi'
+                        time:   [195.36 ns 195.61 ns 195.86 ns]
+get(no ttl) with search: 'salut'
+                        time:   [198.78 ns 199.01 ns 199.25 ns]
+get(no ttl) with search: 'bonjour'
+                        time:   [199.74 ns 200.18 ns 200.79 ns]
+get(no ttl) with search: 'hola'
+                        time:   [199.81 ns 200.20 ns 200.60 ns]
+get(no ttl) with search: 'oi'
+                        time:   [191.97 ns 192.37 ns 192.80 ns]
+get(no ttl) with search: 'mulimuta'
+                        time:   [198.39 ns 198.80 ns 199.22 ns]
+get(with ttl) without search: 'hey'
+                        time:   [232.84 ns 234.11 ns 235.46 ns]
+get(with ttl) without search: 'hi'
+                        time:   [230.81 ns 231.25 ns 231.76 ns]
+get(with ttl) without search: 'salut'
+                        time:   [233.56 ns 234.07 ns 234.67 ns]
+get(with ttl) without search: 'bonjour'
+                        time:   [233.81 ns 234.23 ns 234.67 ns]
+get(with ttl) without search: 'hola'
+                        time:   [234.02 ns 234.43 ns 234.86 ns]
+get(with ttl) without search: 'oi'
+                        time:   [228.52 ns 228.84 ns 229.18 ns]
+get(with ttl) without search: 'mulimuta'
+                        time:   [233.36 ns 233.74 ns 234.15 ns]
+search (not paged): 'h' time:   [18.156 µs 18.274 µs 18.429 µs]
 search (not paged): 'h' #2
-                        time:   [17.999 µs 18.033 µs 18.068 µs]
-search (not paged): 's' time:   [8.5859 µs 8.6066 µs 8.6337 µs]
-search (not paged): 'b' time:   [8.6193 µs 8.6350 µs 8.6505 µs]
+                        time:   [18.093 µs 18.139 µs 18.192 µs]
+search (not paged): 's' time:   [8.6507 µs 8.6653 µs 8.6807 µs]
+search (not paged): 'b' time:   [8.6318 µs 8.6531 µs 8.6766 µs]
 search (not paged): 'h' #3
-                        time:   [18.073 µs 18.160 µs 18.277 µs]
-search (not paged): 'o' time:   [8.6134 µs 8.6296 µs 8.6474 µs]
-search (not paged): 'm' time:   [8.5704 µs 8.5795 µs 8.5900 µs]
-search (paged): 'h'     time:   [15.530 µs 15.562 µs 15.594 µs]
-search (paged): 'h' #2  time:   [15.530 µs 15.556 µs 15.581 µs]
-search (paged): 's'     time:   [5.9301 µs 5.9415 µs 5.9539 µs]
-search (paged): 'b'     time:   [5.9116 µs 5.9221 µs 5.9326 µs]
-search (paged): 'h' #3  time:   [15.522 µs 15.550 µs 15.582 µs]
-search (paged): 'o'     time:   [5.9214 µs 5.9295 µs 5.9388 µs]
-search (paged): 'm'     time:   [5.8985 µs 5.9100 µs 5.9220 µs]
-delete(no ttl): 'hey'   time:   [23.371 µs 23.596 µs 23.802 µs]
-delete(no ttl): 'hi'    time:   [20.279 µs 20.369 µs 20.497 µs]
-delete(no ttl): 'salut' time:   [18.847 µs 18.921 µs 19.000 µs]
-delete(no ttl): 'bonjour'
-                        time:   [18.699 µs 18.753 µs 18.810 µs]
-delete(no ttl): 'hola'  time:   [23.393 µs 24.115 µs 24.940 µs]
-delete(no ttl): 'oi'    time:   [19.467 µs 19.723 µs 20.021 µs]
-delete(no ttl): 'mulimuta'
-                        time:   [21.095 µs 22.061 µs 23.245 µs]
-delete(ttl): 'hey'      time:   [26.199 µs 27.429 µs 28.786 µs]
-delete(ttl): 'hi'       time:   [19.873 µs 20.014 µs 20.201 µs]
-delete(ttl): 'salut'    time:   [22.094 µs 23.212 µs 24.573 µs]
-delete(ttl): 'bonjour'  time:   [20.922 µs 21.346 µs 21.801 µs]
-delete(ttl): 'hola'     time:   [21.242 µs 21.824 µs 22.441 µs]
-delete(ttl): 'oi'       time:   [20.427 µs 20.970 µs 21.692 µs]
-delete(ttl): 'mulimuta' time:   [19.051 µs 19.591 µs 20.289 µs]
-clear(no ttl)           time:   [227.61 µs 231.32 µs 235.62 µs]
-clear(ttl)              time:   [227.36 µs 235.30 µs 249.33 µs]
-compact                 time:   [107.47 ms 108.66 ms 109.94 ms]
+                        time:   [18.106 µs 18.147 µs 18.188 µs]
+search (not paged): 'o' time:   [8.6288 µs 8.6415 µs 8.6557 µs]
+search (not paged): 'm' time:   [8.6453 µs 8.6657 µs 8.6873 µs]
+search (paged): 'h'     time:   [16.161 µs 16.230 µs 16.319 µs]
+search (paged): 'h' #2  time:   [15.949 µs 16.016 µs 16.093 µs]
+search (paged): 's'     time:   [6.0744 µs 6.1114 µs 6.1544 µs]
+search (paged): 'b'     time:   [6.2516 µs 6.3119 µs 6.3827 µs]
+search (paged): 'h' #3  time:   [15.990 µs 16.026 µs 16.063 µs]
+search (paged): 'o'     time:   [6.1061 µs 6.1790 µs 6.2617 µs]
+search (paged): 'm'     time:   [6.5727 µs 6.6862 µs 6.7921 µs]
+delete(no ttl): 'foo'   time:   [51.172 µs 52.554 µs 54.057 µs]
+delete(ttl): 'foo'      time:   [53.211 µs 54.964 µs 56.804 µs]
+delete(no ttl) with search: 'foo'
+                        time:   [70.327 µs 70.698 µs 71.226 µs]
+delete(ttl) with search: 'foo'
+                        time:   [70.753 µs 71.086 µs 71.520 µs]
+clear(no ttl)           time:   [144.05 µs 153.14 µs 170.79 µs]
+clear(ttl)              time:   [142.17 µs 142.68 µs 143.23 µs]
+clear(no ttl) with search
+                        time:   [221.58 µs 223.04 µs 224.52 µs]
+clear(ttl) with search  time:   [218.17 µs 226.53 µs 242.62 µs]
+compact                 time:   [126.76 ms 128.26 ms 129.86 ms]
+compact with search     time:   [128.80 ms 131.45 ms 134.50 ms]
 ```
 
 ## Acknowledgement
