@@ -148,7 +148,10 @@ impl BufferPool {
 
     /// This removes any deleted or expired entries from the file. It must first lock the buffer and the file.
     /// In order to be more efficient, it creates a new file, copying only that data which is not deleted or expired
-    pub(crate) fn compact_file(&mut self, search_index: &mut InvertedIndex) -> io::Result<()> {
+    pub(crate) fn compact_file(
+        &mut self,
+        search_index: &mut Option<&mut InvertedIndex>,
+    ) -> io::Result<()> {
         let folder = self.file_path.parent().unwrap_or_else(|| Path::new("/"));
         let new_file_path = folder.join("tmp__compact.scdb");
         let mut new_file = OpenOptions::new()
@@ -173,7 +176,9 @@ impl BufferPool {
         let mut new_file_offset = header.key_values_start_point;
 
         // clear the search index so as to begin its reconstruction
-        search_index.clear()?;
+        if let Some(idx) = search_index.as_deref_mut() {
+            idx.clear()?;
+        }
 
         for index_block in &mut index {
             let index_block = index_block?;
@@ -202,7 +207,9 @@ impl BufferPool {
                         new_file.write_all(&new_file_offset.to_be_bytes())?;
 
                         // update search index
-                        search_index.add(kv.key, new_file_offset, kv.expiry)?;
+                        if let Some(idx) = search_index.as_deref_mut() {
+                            idx.add(kv.key, new_file_offset, kv.expiry)?;
+                        }
 
                         // move forward in iteration
                         new_file_offset += kv_size;
@@ -872,7 +879,8 @@ mod tests {
         let mut search_index = InvertedIndex::new(&Path::new(index_file_name), None, None, None)
             .expect("create search index");
 
-        pool.compact_file(&mut search_index).expect("compact file");
+        pool.compact_file(&mut Some(&mut search_index))
+            .expect("compact file");
 
         let final_file_size = get_actual_file_size(file_name);
         let (data_in_file, _) = read_from_file(file_name, 0, final_file_size as usize);
