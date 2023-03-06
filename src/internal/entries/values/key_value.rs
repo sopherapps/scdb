@@ -63,12 +63,16 @@ impl<'a> ValueEntry<'a> for KeyValueEntry<'a> {
         let expiry = u64::from_be_bytes(internal::slice_to_array(expiry_slice)?);
 
         let value_size = (size - key_size - KEY_VALUE_MIN_SIZE_IN_BYTES) as usize;
-        let value = safe_slice!(
-            data,
-            offset + k_size + 17,
-            offset + k_size + 17 + value_size,
-            data_len
-        )?;
+        let value = if value_size > 0 {
+            safe_slice!(
+                data,
+                offset + k_size + 17,
+                offset + k_size + 17 + value_size,
+                data_len
+            )?
+        } else {
+            "".as_bytes()
+        };
 
         let entry = Self {
             size,
@@ -136,6 +140,23 @@ mod tests {
             .collect();
         let got = KeyValueEntry::from_data_array(&data_array[..], 4);
         assert!(got.is_err());
+    }
+
+    #[test]
+    fn key_value_entry_from_data_array_value_as_empty_string() {
+        let data_array = vec![
+            /* size: 20u32*/ 0u8, 0, 0, 20, /* key size: 3u32*/ 0, 0, 0, 3,
+            /* key */ 102, 111, 111, /* is_deleted */ 0, /* expiry 0u64 */ 0, 0, 0,
+            0, 0, 0, 0, 0, /* value: "" */
+        ];
+        let expected = KeyValueEntry::new(&b"foo"[..], &b""[..], 0);
+        let got =
+            KeyValueEntry::from_data_array(&data_array, 0).expect("key value from data array");
+        assert_eq!(
+            &got, &expected,
+            "got = {:?}, expected = {:?}",
+            &got, &expected
+        );
     }
 
     #[test]

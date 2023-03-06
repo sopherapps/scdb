@@ -1322,6 +1322,24 @@ mod tests {
         fs::remove_dir_all(STORE_PATH).expect("delete store folder");
     }
 
+    #[test]
+    #[serial]
+    fn get_does_not_err_for_empty_string_values() {
+        let key = "foo".as_bytes().to_vec();
+        let value = "".as_bytes().to_vec();
+
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), false).expect("create store");
+        store.clear().expect("store failed to clear");
+
+        store.set(&key, &value, None).expect("set key");
+        let got = store.get(&key).expect("get key first time");
+        assert_eq!(got, Some(value.clone()));
+
+        let got = store.get(&key).expect("get key second time");
+        assert_eq!(got, Some(value.clone()));
+    }
+
     /// Deletes the given keys in the store
     fn delete_keys(store: &mut Store, keys_to_delete: &Vec<Vec<u8>>) {
         for k in keys_to_delete {
