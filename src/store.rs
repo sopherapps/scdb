@@ -591,8 +591,11 @@ fn extract_header_from_buffer_pool(buffer_pool: &mut BufferPool) -> io::Result<D
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use nix::sys::wait::wait;
+    #[cfg(unix)]
     use nix::unistd::fork;
+    #[cfg(unix)]
     use nix::unistd::ForkResult::{Child, Parent};
     use std::fs::OpenOptions;
     use std::io::{Seek, SeekFrom};
@@ -1345,6 +1348,7 @@ mod tests {
         assert_eq!(got, Some(value.clone()));
     }
 
+    #[cfg(unix)]
     #[test]
     #[serial]
     fn multi_processed_set() {
