@@ -596,6 +596,7 @@ mod tests {
     use nix::unistd::ForkResult::{Child, Parent};
     use std::fs::OpenOptions;
     use std::io::{Seek, SeekFrom};
+    use std::thread::JoinHandle;
     use std::{fs, io, thread};
 
     use serial_test::serial;
@@ -1371,6 +1372,47 @@ mod tests {
                 fs::remove_dir_all(STORE_PATH).expect("delete store folder");
             }
         }
+    }
+
+    #[test]
+    #[serial]
+    fn multi_threaded_access() {
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), false).expect("create store");
+        store.clear().expect("store failed to clear");
+        let store = Arc::new(Mutex::new(store));
+        let keys = Arc::new(get_keys());
+        let values = Arc::new(get_values());
+        let mut handles = Vec::<JoinHandle<()>>::with_capacity(10);
+
+        for _ in 0..10 {
+            let keys = Arc::clone(&keys);
+            let values = Arc::clone(&values);
+            let store = Arc::clone(&store);
+
+            let handle = thread::spawn(move || {
+                let mut store = store.lock().unwrap();
+                insert_test_data(&mut store, &keys, &values, None);
+                let received_values = get_values_for_keys(&mut store, &keys);
+
+                let expected_values = wrap_values_in_result(&values);
+                assert_list_eq!(&expected_values, &received_values);
+            });
+
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let mut store = store.lock().unwrap();
+        insert_test_data(&mut store, &keys, &values, None);
+        let received_values = get_values_for_keys(&mut store, &keys);
+
+        let expected_values = wrap_values_in_result(&values);
+        assert_list_eq!(&expected_values, &received_values);
+        fs::remove_dir_all(STORE_PATH).expect("delete store folder");
     }
 
     /// Deletes the given keys in the store
