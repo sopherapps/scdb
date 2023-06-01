@@ -591,8 +591,15 @@ fn extract_header_from_buffer_pool(buffer_pool: &mut BufferPool) -> io::Result<D
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use nix::sys::wait::wait;
+    #[cfg(unix)]
+    use nix::unistd::fork;
+    #[cfg(unix)]
+    use nix::unistd::ForkResult::{Child, Parent};
     use std::fs::OpenOptions;
     use std::io::{Seek, SeekFrom};
+    use std::thread::JoinHandle;
     use std::{fs, io, thread};
 
     use serial_test::serial;
@@ -604,6 +611,7 @@ mod tests {
     /// Asserts that two lists of Result<Option<T>> are equal
     macro_rules! assert_list_eq {
         ($expected:expr, $got:expr) => {
+            assert_eq!($expected.len(), $got.len());
             for (got, expected) in $got.into_iter().zip($expected) {
                 assert_eq!(got.as_ref().unwrap(), expected.as_ref().unwrap());
             }
@@ -1338,6 +1346,78 @@ mod tests {
 
         let got = store.get(&key).expect("get key second time");
         assert_eq!(got, Some(value.clone()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial]
+    fn multi_processed_set() {
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), false).expect("create store");
+        store.clear().expect("store failed to clear");
+        let keys = get_keys();
+        let values = get_values();
+        let new_pid = unsafe { fork() }.expect("forked a process");
+
+        match new_pid {
+            Child => {
+                insert_test_data(&mut store, &keys, &values, None);
+                let received_values = get_values_for_keys(&mut store, &keys);
+
+                let expected_values = wrap_values_in_result(&values);
+                assert_list_eq!(&expected_values, &received_values);
+            }
+            Parent { child: _ } => {
+                insert_test_data(&mut store, &keys, &values, None);
+                let received_values = get_values_for_keys(&mut store, &keys);
+
+                let expected_values = wrap_values_in_result(&values);
+                assert_list_eq!(&expected_values, &received_values);
+                wait().expect("wait for child processes to complete");
+                fs::remove_dir_all(STORE_PATH).expect("delete store folder");
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn multi_threaded_access() {
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), false).expect("create store");
+        store.clear().expect("store failed to clear");
+        let store = Arc::new(Mutex::new(store));
+        let keys = Arc::new(get_keys());
+        let values = Arc::new(get_values());
+        let mut handles = Vec::<JoinHandle<()>>::with_capacity(10);
+
+        for _ in 0..10 {
+            let keys = Arc::clone(&keys);
+            let values = Arc::clone(&values);
+            let store = Arc::clone(&store);
+
+            let handle = thread::spawn(move || {
+                let mut store = store.lock().unwrap();
+                insert_test_data(&mut store, &keys, &values, None);
+                let received_values = get_values_for_keys(&mut store, &keys);
+
+                let expected_values = wrap_values_in_result(&values);
+                assert_list_eq!(&expected_values, &received_values);
+            });
+
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let mut store = store.lock().unwrap();
+        insert_test_data(&mut store, &keys, &values, None);
+        let received_values = get_values_for_keys(&mut store, &keys);
+
+        let expected_values = wrap_values_in_result(&values);
+        assert_list_eq!(&expected_values, &received_values);
+        fs::remove_dir_all(STORE_PATH).expect("delete store folder");
     }
 
     /// Deletes the given keys in the store
