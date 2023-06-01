@@ -591,6 +591,9 @@ fn extract_header_from_buffer_pool(buffer_pool: &mut BufferPool) -> io::Result<D
 
 #[cfg(test)]
 mod tests {
+    use nix::sys::wait::wait;
+    use nix::unistd::fork;
+    use nix::unistd::ForkResult::{Child, Parent};
     use std::fs::OpenOptions;
     use std::io::{Seek, SeekFrom};
     use std::{fs, io, thread};
@@ -1338,6 +1341,36 @@ mod tests {
 
         let got = store.get(&key).expect("get key second time");
         assert_eq!(got, Some(value.clone()));
+    }
+
+    #[test]
+    #[serial]
+    fn multi_processed_set() {
+        let mut store =
+            Store::new(STORE_PATH, None, None, None, Some(0), false).expect("create store");
+        store.clear().expect("store failed to clear");
+        let keys = get_keys();
+        let values = get_values();
+        let new_pid = unsafe { fork() }.expect("forked a process");
+
+        match new_pid {
+            Child => {
+                insert_test_data(&mut store, &keys, &values, None);
+                let received_values = get_values_for_keys(&mut store, &keys);
+
+                let expected_values = wrap_values_in_result(&values);
+                assert_list_eq!(&expected_values, &received_values);
+            }
+            Parent { child: _ } => {
+                insert_test_data(&mut store, &keys, &values, None);
+                let received_values = get_values_for_keys(&mut store, &keys);
+
+                let expected_values = wrap_values_in_result(&values);
+                assert_list_eq!(&expected_values, &received_values);
+                wait().expect("wait for child processes to complete");
+                fs::remove_dir_all(STORE_PATH).expect("delete store folder");
+            }
+        }
     }
 
     /// Deletes the given keys in the store
