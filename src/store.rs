@@ -608,6 +608,7 @@ mod tests {
     /// Asserts that two lists of Result<Option<T>> are equal
     macro_rules! assert_list_eq {
         ($expected:expr, $got:expr) => {
+            assert_eq!($expected.len(), $got.len());
             for (got, expected) in $got.into_iter().zip($expected) {
                 assert_eq!(got.as_ref().unwrap(), expected.as_ref().unwrap());
             }
